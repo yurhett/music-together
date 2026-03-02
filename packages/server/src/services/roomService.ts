@@ -5,6 +5,7 @@ import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { scheduleDeletion, cancelDeletionTimer } from './roomLifecycleService.js'
+import { consumeRejoinTicket } from './rejoinTicketService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { updateVoteThreshold } from './voteService.js'
 import { logger } from '../utils/logger.js'
@@ -12,7 +13,7 @@ import type { TypedServer } from '../middleware/types.js'
 
 // Re-export from their new homes so existing `roomService.xxx()` callers
 // in controllers don't need import changes.
-export { toPublicRoomState } from '../utils/roomUtils.js'
+export { toPublicRoomState, toPublicRoomStateForOwner } from '../utils/roomUtils.js'
 export { broadcastRoomList } from './roomLifecycleService.js'
 
 // ---------------------------------------------------------------------------
@@ -277,8 +278,9 @@ export interface JoinValidationResult {
 export function validateJoinRequest(
   roomId: string,
   socketId: string,
+  identityUserId: string,
   password?: string,
-  persistentUserId?: string,
+  rejoinToken?: string,
 ): JoinValidationResult {
   const room = roomRepo.get(roomId)
   if (!room) {
@@ -292,13 +294,18 @@ export function validateJoinRequest(
   }
 
   const existingMapping = roomRepo.getSocketMapping(socketId)
-  const effectiveUserId = persistentUserId || socketId
+  const effectiveUserId = identityUserId
   const alreadyInRoom = room.users.some((u) => u.id === effectiveUserId)
   const isCreator = effectiveUserId === room.creatorId
   const isPersistentAdmin = room.adminUserIds.has(effectiveUserId)
+  const hasValidRejoinTicket =
+    typeof rejoinToken === 'string' && rejoinToken.length > 0
+      ? consumeRejoinTicket(rejoinToken, roomId, effectiveUserId)
+      : false
 
   // Password bypass: same socket mapping, already in room, creator, or persistent admin
-  const skipPassword = existingMapping?.roomId === roomId || alreadyInRoom || isCreator || isPersistentAdmin
+  const skipPassword =
+    hasValidRejoinTicket || existingMapping?.roomId === roomId || alreadyInRoom || isCreator || isPersistentAdmin
   // Notification skip: only when user is literally still in the room
   const isRejoin = existingMapping?.roomId === roomId || alreadyInRoom
 

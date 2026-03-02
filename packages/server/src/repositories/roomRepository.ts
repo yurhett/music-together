@@ -94,6 +94,16 @@ export class InMemoryRoomRepository implements RoomRepository {
     return false
   }
 
+  getSocketIdForUser(roomId: string, userId: string): string | null {
+    const sockets = this.roomToSockets.get(roomId)
+    if (!sockets) return null
+    for (const sid of sockets) {
+      const mapping = this.socketToRoom.get(sid)
+      if (mapping && mapping.userId === userId && mapping.roomId === roomId) return sid
+    }
+    return null
+  }
+
   setSocketRTT(socketId: string, rttMs: number): void {
     const prev = this.socketRTT.get(socketId)
     if (prev === undefined) {

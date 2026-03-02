@@ -100,6 +100,7 @@ export default function RoomPage() {
       try {
         const res = await fetch(`${SERVER_URL}/api/rooms/${roomId}/check`, {
           signal: controller.signal,
+          credentials: 'include',
         })
         if (cancelled) return
 
@@ -161,7 +162,7 @@ export default function RoomPage() {
         roomId,
         nickname,
         password: passwordRef.current || undefined,
-        userId: storage.getUserId(),
+        rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
       })
     }
     if (room) {
@@ -232,7 +233,12 @@ export default function RoomPage() {
       if (!nickname) return
       setPasswordLoading(true)
       setPasswordError(null)
-      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
+      socket.emit(EVENTS.ROOM_JOIN, {
+        roomId,
+        nickname,
+        password,
+        rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
+      })
     },
     [socket, roomId],
   )

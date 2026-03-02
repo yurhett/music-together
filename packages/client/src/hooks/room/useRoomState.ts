@@ -48,6 +48,10 @@ export function useRoomState() {
       useRoomStore.getState().addUser(user)
     }
 
+    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number }) => {
+      storage.setRejoinToken(data.roomId, data.token, data.expiresAt)
+    }
+
     const onUserLeft = (user: User) => {
       useRoomStore.getState().removeUser(user.id)
     }
@@ -86,6 +90,7 @@ export function useRoomState() {
     }
 
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
     socket.on(EVENTS.ROOM_USER_JOINED, onUserJoined)
     socket.on(EVENTS.ROOM_USER_LEFT, onUserLeft)
     socket.on(EVENTS.ROOM_SETTINGS, onSettings)
@@ -102,6 +107,7 @@ export function useRoomState() {
 
     return () => {
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
       socket.off(EVENTS.ROOM_USER_JOINED, onUserJoined)
       socket.off(EVENTS.ROOM_USER_LEFT, onUserLeft)
       socket.off(EVENTS.ROOM_SETTINGS, onSettings)

@@ -9,6 +9,7 @@ import { Router, type Router as RouterType, type Request, type Response } from '
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
 import * as authService from '../services/authService.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 
 const router: RouterType = Router()
@@ -76,8 +77,23 @@ router.get(
 router.get(
   '/playlist',
   validated(playlistQuerySchema, 'Get playlist', async (data, _req, res) => {
-    const { source, id, limit, offset, total, roomId, userId } = data
-    const cookie = roomId && userId ? authService.getUserCookie(userId, source, roomId) : null
+    const { source, id, limit, offset, total, roomId } = data
+
+    let cookie: string | null = null
+    if (roomId) {
+      const identityUserId = _req.identityUserId
+      if (!identityUserId) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      const room = roomRepo.get(roomId)
+      if (!room || !room.users.some((u) => u.id === identityUserId)) {
+        res.status(403).json({ error: 'Forbidden' })
+        return
+      }
+      cookie = authService.getUserCookie(identityUserId, source, roomId)
+    }
+
     const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie)
     res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
   }),

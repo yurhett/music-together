@@ -24,6 +24,7 @@ import { logger } from '../utils/logger.js'
 import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import { cleanupRoom as cleanupPlayerRoom } from './playerService.js'
 import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
+import { cleanupRoomRejoinTickets } from './rejoinTicketService.js'
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -56,6 +57,7 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
       cleanupPlayerRoom(roomId)
       cleanupVoteRoom(roomId)
       cleanupAuthRoom(roomId)
+      cleanupRoomRejoinTickets(roomId)
       roomDeletionTimers.delete(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
       // Notify lobby users that the room is gone

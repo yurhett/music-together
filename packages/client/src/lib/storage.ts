@@ -1,5 +1,4 @@
 import type { MusicSource } from '@music-together/shared'
-import { nanoid } from 'nanoid'
 
 const PREFIX = 'mt-'
 
@@ -16,6 +15,14 @@ function safeSet(key: string, value: string): void {
     localStorage.setItem(`${PREFIX}${key}`, value)
   } catch {
     // quota exceeded or blocked
+  }
+}
+
+function safeRemove(key: string): void {
+  try {
+    localStorage.removeItem(`${PREFIX}${key}`)
+  } catch {
+    // blocked
   }
 }
 
@@ -81,15 +88,12 @@ export const SETTING_DEFAULTS = {
 } satisfies Record<string, unknown>
 
 export const storage = {
-  /** Persistent user identity — generated once and stored in localStorage */
+  /** Persistent user identity — synced from server identity bootstrap */
   getUserId: (): string => {
-    let id = safeGet('userId')
-    if (!id) {
-      id = nanoid()
-      safeSet('userId', id)
-    }
-    return id
+    return safeGet('userId') ?? ''
   },
+  setUserId: (id: string) => safeSet('userId', id),
+  clearUserId: () => safeRemove('userId'),
 
   getNickname: () => safeGet('nickname') ?? '',
   setNickname: (v: string) => safeSet('nickname', v),
@@ -188,10 +192,32 @@ export const storage = {
     const list = safeGetJSON<StoredCookie[]>('auth-cookies') ?? []
     return list.some((c) => c.platform === platform)
   },
+
+  getRejoinToken: (roomId: string): string | null => {
+    const data = safeGetJSON<StoredRejoinToken>('rejoin-token')
+    if (!data) return null
+    if (data.roomId !== roomId) return null
+    if (data.expiresAt <= Date.now()) return null
+    return data.token
+  },
+  setRejoinToken: (roomId: string, token: string, expiresAt: number) =>
+    safeSetJSON('rejoin-token', { roomId, token, expiresAt } satisfies StoredRejoinToken),
+  clearRejoinToken: (roomId?: string) => {
+    const data = safeGetJSON<StoredRejoinToken>('rejoin-token')
+    if (!data) return
+    if (roomId && data.roomId !== roomId) return
+    safeRemove('rejoin-token')
+  },
 }
 
 /** Shape stored in localStorage for auth cookies */
 export interface StoredCookie {
   platform: MusicSource
   cookie: string
+}
+
+interface StoredRejoinToken {
+  roomId: string
+  token: string
+  expiresAt: number
 }

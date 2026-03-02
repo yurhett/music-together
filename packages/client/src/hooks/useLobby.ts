@@ -34,14 +34,19 @@ export function useLobby() {
 
   const createRoom = useCallback(
     (nickname: string, roomName?: string, password?: string) => {
-      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password, userId: storage.getUserId() })
+      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password })
     },
     [socket],
   )
 
   const joinRoom = useCallback(
     (roomId: string, nickname: string, password?: string) => {
-      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
+      socket.emit(EVENTS.ROOM_JOIN, {
+        roomId,
+        nickname,
+        password,
+        rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
+      })
     },
     [socket],
   )

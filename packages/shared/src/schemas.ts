@@ -9,14 +9,13 @@ export const roomCreateSchema = z.object({
   nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   roomName: z.string().max(LIMITS.ROOM_NAME_MAX_LENGTH, '房间名过长').optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
-  userId: z.string().min(1).max(50).optional(),
 })
 
 export const roomJoinSchema = z.object({
   roomId: z.string().min(1, '房间号不能为空'),
   nickname: z.string().min(1, '昵称不能为空'),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).optional(),
-  userId: z.string().min(1).max(50).optional(),
+  rejoinToken: z.string().min(1).max(500).optional(),
 })
 
 export const audioQualitySchema = z.union([z.literal(128), z.literal(192), z.literal(320), z.literal(999)])
@@ -128,7 +127,6 @@ export const playlistQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   total: z.coerce.number().int().min(0).optional(),
   roomId: z.string().min(1).max(10).optional(),
-  userId: z.string().min(1).max(30).optional(),
 })
 
 // ---------------------------------------------------------------------------

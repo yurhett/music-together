@@ -5,6 +5,7 @@ export const EVENTS = {
   ROOM_JOIN: 'room:join',
   ROOM_LEAVE: 'room:leave',
   ROOM_STATE: 'room:state',
+  ROOM_REJOIN_TOKEN: 'room:rejoin_token',
   ROOM_USER_JOINED: 'room:user_joined',
   ROOM_USER_LEFT: 'room:user_left',
   ROOM_SETTINGS: 'room:settings',

@@ -3,8 +3,12 @@ import type { ClientToServerEvents, ServerToClientEvents } from '@music-together
 import type { RoomData } from '../repositories/types.js'
 import type { User } from '@music-together/shared'
 
-export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>
-export type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>
+export interface SocketData {
+  identityUserId: string
+}
+
+export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>
+export type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>
 
 export interface HandlerContext {
   io: TypedServer

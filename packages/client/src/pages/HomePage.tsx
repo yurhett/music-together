@@ -88,6 +88,10 @@ export default function HomePage() {
       navigate(`/room/${roomState.id}`)
     }
 
+    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number }) => {
+      storage.setRejoinToken(data.roomId, data.token, data.expiresAt)
+    }
+
     // 服务端在 ROOM_JOIN 后同时 emit ROOM_STATE + CHAT_HISTORY，
     // 若不在这里监听 CHAT_HISTORY，消息会在 navigate 之前丢失
     // （RoomPage 的 useChatSync 尚未挂载）。
@@ -128,12 +132,14 @@ export default function HomePage() {
 
     socket.on(EVENTS.ROOM_CREATED, onCreated)
     socket.on(EVENTS.ROOM_STATE, onState)
+    socket.on(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
     socket.on(EVENTS.CHAT_HISTORY, onChatHistory)
     socket.on(EVENTS.ROOM_ERROR, onError)
 
     return () => {
       socket.off(EVENTS.ROOM_CREATED, onCreated)
       socket.off(EVENTS.ROOM_STATE, onState)
+      socket.off(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
       socket.off(EVENTS.CHAT_HISTORY, onChatHistory)
       socket.off(EVENTS.ROOM_ERROR, onError)
     }

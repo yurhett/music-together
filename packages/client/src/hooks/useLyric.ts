@@ -196,7 +196,7 @@ export function useLyric() {
         try {
           const res = await fetch(
             `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(track.lyricId)}`,
-            { signal: controller.signal },
+            { signal: controller.signal, credentials: 'include' },
           )
           if (res.ok) {
             lyricData = await res.json()

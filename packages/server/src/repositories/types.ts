@@ -35,6 +35,8 @@ export interface RoomRepository {
   deleteSocketMapping(socketId: string): void
   /** Check if a user has another active socket in the same room (excluding a specific socket) */
   hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean
+  /** 根据 roomId + userId 查找对应的 socketId（用于定向发送） */
+  getSocketIdForUser(roomId: string, userId: string): string | null
   /** Store a smoothed RTT measurement for a given socket */
   setSocketRTT(socketId: string, rttMs: number): void
   /** Retrieve the current smoothed RTT for a socket (default 0) */

@@ -80,7 +80,7 @@ export const PlayerControls = memo(function PlayerControls({
     const inner = innerRef.current
     if (!wrapper || !inner) return
     const update = () => {
-      inner.style.zoom = String(wrapper.clientWidth / DESIGN_WIDTH)
+      inner.style.setProperty('zoom', String(wrapper.clientWidth / DESIGN_WIDTH))
     }
     update()
     const ro = new ResizeObserver(() => update())

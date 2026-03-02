@@ -1,4 +1,6 @@
 import { connectSocket, type TypedSocket } from '@/lib/socket'
+import { SERVER_URL } from '@/lib/config'
+import { storage } from '@/lib/storage'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
@@ -19,6 +21,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const socket = socketRef.current
+    let cancelled = false
+    let reauthenticating = false
 
     const onConnect = () => {
       setIsConnected(true)
@@ -37,17 +41,64 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       })
     }
 
-    socket.on('connect', onConnect)
-    socket.on('disconnect', onDisconnect)
+    const bootstrapIdentity = async (showError = true): Promise<boolean> => {
+      try {
+        const res = await fetch(`${SERVER_URL}/api/auth/identity/bootstrap`, {
+          method: 'POST',
+          credentials: 'include',
+        })
+        if (!res.ok) {
+          storage.clearUserId()
+          if (showError) toast.error('身份初始化失败，请刷新重试')
+          return false
+        }
 
-    // Ensure connected
-    if (!socket.connected) {
-      socket.connect()
+        const userId = res.headers.get('X-Identity-UserId') ?? res.headers.get('x-identity-userid')
+        if (userId && userId.trim().length > 0) {
+          storage.setUserId(userId.trim())
+        } else {
+          storage.clearUserId()
+        }
+        return true
+      } catch {
+        storage.clearUserId()
+        if (showError) toast.error('连接服务器失败，请稍后重试')
+        return false
+      }
     }
 
+    const ensureIdentityAndConnect = async (showError = true): Promise<void> => {
+      await bootstrapIdentity(showError)
+      if (!cancelled && !socket.connected) {
+        socket.connect()
+      }
+    }
+
+    const onConnectError = async (err: Error) => {
+      if (err.message !== 'UNAUTHENTICATED') return
+      if (cancelled || reauthenticating) return
+
+      reauthenticating = true
+      try {
+        const ok = await bootstrapIdentity(false)
+        if (ok && !cancelled && !socket.connected) {
+          socket.connect()
+        }
+      } finally {
+        reauthenticating = false
+      }
+    }
+
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
+    socket.on('connect_error', onConnectError)
+    ensureIdentityAndConnect()
+
     return () => {
+      cancelled = true
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
+      socket.off('connect_error', onConnectError)
     }
   }, [])
 

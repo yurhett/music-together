@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
-import { storage } from '@/lib/storage'
 import { SERVER_URL } from '@/lib/config'
 
 const PAGE_SIZE = 100
@@ -13,7 +12,7 @@ function buildPlaylistUrl(
   id: string,
   limit: number,
   offset: number,
-  options?: { total?: number; roomId?: string; userId?: string },
+  options?: { total?: number; roomId?: string },
 ): string {
   const params = new URLSearchParams({
     source,
@@ -23,7 +22,6 @@ function buildPlaylistUrl(
   })
   if (options?.total) params.set('total', String(options.total))
   if (options?.roomId) params.set('roomId', options.roomId)
-  if (options?.userId) params.set('userId', options.userId)
   return `${SERVER_URL}/api/music/playlist?${params.toString()}`
 }
 
@@ -142,9 +140,8 @@ export function usePlaylist() {
         const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
           total: trackCount,
           roomId: useRoomStore.getState().room?.id,
-          userId: storage.getUserId(),
         })
-        const res = await fetch(url)
+        const res = await fetch(url, { credentials: 'include' })
         if (!res.ok) {
           setTracksLoading(false)
           return []
@@ -192,9 +189,8 @@ export function usePlaylist() {
       const offset = offsetRef.current
       const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
         roomId: useRoomStore.getState().room?.id,
-        userId: storage.getUserId(),
       })
-      const res = await fetch(url)
+      const res = await fetch(url, { credentials: 'include' })
       if (!res.ok) return
 
       // Stale response guard — context might have changed while we were fetching

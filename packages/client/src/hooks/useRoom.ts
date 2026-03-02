@@ -1,7 +1,9 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { resetAllRoomState } from '@/lib/resetStores'
+import { storage } from '@/lib/storage'
 import { EVENTS } from '@music-together/shared'
 import { useCallback } from 'react'
+import { useRoomStore } from '@/stores/roomStore'
 
 import { useRoomState } from './room/useRoomState'
 import { useChatSync } from './room/useChatSync'
@@ -25,6 +27,8 @@ export function useRoom() {
   useConnectionGuard()
 
   const leaveRoom = useCallback(() => {
+    const roomId = useRoomStore.getState().room?.id
+    if (roomId) storage.clearRejoinToken(roomId)
     socket.emit(EVENTS.ROOM_LEAVE)
     resetAllRoomState()
   }, [socket])

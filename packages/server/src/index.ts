@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { Server } from 'socket.io'
 import { config } from './config.js'
 import { initializeSocket } from './controllers/index.js'
+import { identityHttpMiddleware } from './middleware/identityHttp.js'
+import { attachSocketIdentity } from './middleware/socketIdentity.js'
+import type { SocketData } from './middleware/types.js'
+import authRoutes from './routes/auth.js'
 import musicRoutes from './routes/music.js'
 import roomRoutes from './routes/rooms.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
@@ -24,8 +28,10 @@ app.use(
   }),
 )
 app.use(express.json())
+app.use('/api', identityHttpMiddleware)
 
 // REST API routes
+app.use('/api/auth', authRoutes)
 app.use('/api/music', musicRoutes)
 app.use('/api/rooms', roomRoutes)
 
@@ -70,7 +76,7 @@ if (fs.existsSync(indexHtml)) {
 }
 
 // Socket.IO with typed events
-const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
+const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(httpServer, {
   cors: {
     origin: config.corsOrigins,
     methods: ['GET', 'POST'],
@@ -79,6 +85,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   transports: ['websocket'],
 })
 
+attachSocketIdentity(io)
 initializeSocket(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

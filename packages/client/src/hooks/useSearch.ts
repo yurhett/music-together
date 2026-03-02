@@ -50,7 +50,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
     ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
       const res = await fetch(
         `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
-        { signal },
+        { signal, credentials: 'include' },
       )
       if (!res.ok) throw new Error('Search failed')
       const data = await res.json()

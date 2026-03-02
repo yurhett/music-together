@@ -12,6 +12,7 @@ import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
+import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
 import * as roomService from '../services/roomService.js'
 import * as voteService from '../services/voteService.js'
 import { logger } from '../utils/logger.js'
@@ -39,17 +40,26 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { nickname, roomName, password, userId } = parsed.data
+      const { nickname, roomName, password } = parsed.data
 
       // Auto-leave any previous room before creating a new one
-      handleLeave(io, socket, 'auto-leave before create')
+      handleLeave(io, socket, 'auto-leave before create', true)
 
-      const { room, user } = roomService.createRoom(socket.id, nickname.trim(), roomName, password, userId)
+      const { room, user } = roomService.createRoom(
+        socket.id,
+        nickname.trim(),
+        roomName,
+        password,
+        socket.data.identityUserId,
+      )
 
       socket.leave('lobby')
       socket.join(room.id)
       socket.emit(EVENTS.ROOM_CREATED, { roomId: room.id, userId: user.id })
-      socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+      // 创建者是 owner，发送含密码的完整状态
+      socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
+      const rejoin = issueRejoinTicket(room.id, user.id)
+      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, { roomId: room.id, token: rejoin.token, expiresAt: rejoin.expiresAt })
 
       // 广播房间列表给大厅用户
       roomService.broadcastRoomList(io)
@@ -70,10 +80,16 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { roomId, nickname, password, userId } = parsed.data
+      const { roomId, nickname, password, rejoinToken } = parsed.data
 
       // Validate join request (password, rejoin scenarios) — pure business logic
-      const validation = roomService.validateJoinRequest(roomId, socket.id, password, userId)
+      const validation = roomService.validateJoinRequest(
+        roomId,
+        socket.id,
+        socket.data.identityUserId,
+        password,
+        rejoinToken,
+      )
       if (!validation.valid) {
         socket.emit(EVENTS.ROOM_ERROR, {
           code: ERROR_CODE[validation.errorCode as keyof typeof ERROR_CODE] ?? ERROR_CODE.JOIN_FAILED,
@@ -85,29 +101,34 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       // Auto-leave any previous room (different from target) before joining
       const existingMapping = roomRepo.getSocketMapping(socket.id)
       if (existingMapping && existingMapping.roomId !== roomId) {
-        handleLeave(io, socket, 'auto-leave before join')
+        handleLeave(io, socket, 'auto-leave before join', true)
       }
 
-      const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), userId)
+      const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), socket.data.identityUserId)
       if (!result) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.JOIN_FAILED, message: '加入房间失败' })
         return
       }
 
       const { room: updatedRoom, user, hostChanged } = result
+      const rejoin = issueRejoinTicket(roomId, user.id)
 
       socket.leave('lobby')
       socket.join(roomId)
 
       // Send full room state + chat history
-      // If conductor changed (owner joined, etc.), broadcast to ALL clients.
-      // Otherwise, only send to the joining socket.
-      const publicState = roomService.toPublicRoomState(updatedRoom)
+      // Owner 收到含密码版本，其他成员收到不含密码版本
+      const isOwner = user.role === 'owner'
+      const stateForJoiner = isOwner
+        ? roomService.toPublicRoomStateForOwner(updatedRoom)
+        : roomService.toPublicRoomState(updatedRoom)
+      socket.emit(EVENTS.ROOM_STATE, stateForJoiner)
+
+      // If conductor changed (owner joined, etc.), broadcast to ALL OTHER clients.
       if (hostChanged) {
-        io.to(roomId).emit(EVENTS.ROOM_STATE, publicState)
-      } else {
-        socket.emit(EVENTS.ROOM_STATE, publicState)
+        socket.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
       }
+      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, { roomId, token: rejoin.token, expiresAt: rejoin.expiresAt })
       socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
       // Sync playback state to the joining client (auto-resume, auto-play)
@@ -141,7 +162,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   socket.on(EVENTS.ROOM_LEAVE, () => {
     try {
       logger.info(`ROOM_LEAVE event from ${socket.id}`, { socketId: socket.id })
-      handleLeave(io, socket)
+      handleLeave(io, socket, undefined, true)
     } catch (err) {
       logger.error('ROOM_LEAVE handler error', err, { socketId: socket.id })
     }
@@ -168,12 +189,20 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       const updatedRoom = roomRepo.get(ctx.roomId)
       if (!updatedRoom) return
-      io.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, {
+
+      // 仅 owner 收到密码明文，其他成员只收到 hasPassword 标记
+      const baseSettings = {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
-        password: updatedRoom.password ?? null,
         audioQuality: updatedRoom.audioQuality,
+      }
+      // 给 owner 发送含密码的设置
+      ctx.socket.emit(EVENTS.ROOM_SETTINGS, {
+        ...baseSettings,
+        password: updatedRoom.password ?? null,
       })
+      // 给房间内其他成员发送不含密码的设置
+      ctx.socket.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, baseSettings)
 
       logger.info(`Room ${ctx.roomId} settings updated`, { roomId: ctx.roomId })
 
@@ -231,11 +260,14 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
  * Leave the current room (if any), notify other users, and update lobby.
  * Used by ROOM_LEAVE, disconnect, and auto-leave before create/join.
  */
-function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string): void {
+function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revokeTicket = false): void {
   const result = roomService.leaveRoom(socket.id, io)
   if (!result) return
 
   const { roomId, user, room, hostChanged, voteUpdated } = result
+  if (revokeTicket) {
+    revokeRejoinTickets(roomId, user.id)
+  }
   socket.leave(roomId)
   socket.join('lobby')
   io.to(roomId).emit(EVENTS.ROOM_USER_LEFT, user)
@@ -247,8 +279,16 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string): voi
   }
 
   // 房主变更时广播完整状态，确保所有客户端更新 hostId
+  // 新 owner 收到含密码版本，其他成员不含密码
   if (hostChanged && room && room.users.length > 0) {
-    io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+    const newOwner = room.users.find((u) => u.role === 'owner')
+    const ownerSocketId = newOwner ? roomRepo.getSocketIdForUser(roomId, newOwner.id) : null
+    if (ownerSocketId) {
+      io.to(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
+      io.to(roomId).except(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+    } else {
+      io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+    }
   }
 
   // Broadcast updated vote state after threshold recalculation
