@@ -14,19 +14,7 @@ import { globalHtmlAudio } from '@/lib/singletonAudio'
 export interface AudioFacade {
   unload: () => void
   play: (id?: number) => number
-  pause: () => void
-  seek: (val?: number) => number
-  volume: (val?: number) => number
-  duration: () => number
-  playing: () => boolean
-  fade: (from: number, to: number, durationMs: number) => void
-  rate: (val?: number) => number
-}
-
-export interface AudioFacade {
-  unload: () => void
-  play: (id?: number) => number
-  pause: () => void
+  pause: (id?: number) => void
   seek: (val?: number) => number
   volume: (val?: number) => number
   duration: () => number
