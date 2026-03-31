@@ -156,7 +156,11 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       if (globalHtmlAudio) {
-        globalHtmlAudio.pause()
+        // iOS Safari Background Fix: DO NOT call .pause() here!
+        // Pausing immediately before swapping .src breaks the continuous playback
+        // chain, which makes Safari drop the background media session token.
+        // Re-assigning .src below will naturally halt the old track.
+        // globalHtmlAudio.pause() 
         stopTimeUpdate()
       }
 

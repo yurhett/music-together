@@ -98,6 +98,13 @@ export function usePlayer() {
         // avoid wildly inaccurate scheduling from uncorrected local clocks.
         const delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
+        
+        // Mute the current track immediately so the user hears silence during the scheduling 
+        // window, but iOS Safari keeps the background audio token alive.
+        if (howlRef.current) {
+          howlRef.current.volume(0) // Will be reset by loadTrack's natural fade-in
+        }
+
         playTimerRef.current = setTimeout(() => {
           playTimerRef.current = null
           loadTrack(data.track, 0, data.playState.isPlaying)
