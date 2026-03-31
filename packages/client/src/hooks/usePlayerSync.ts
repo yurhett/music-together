@@ -15,17 +15,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useEffect, useRef, type RefObject } from 'react'
-
-export interface AudioFacade {
-  unload: () => void
-  play: (id?: number) => number
-  pause: () => void
-  seek: (val?: number) => number
-  volume: (val?: number) => number
-  duration: () => number
-  playing: () => boolean
-  fade: (from: number, to: number, durationMs: number) => void
-}
+import type { AudioFacade } from './useHowl'
 
 // ---------------------------------------------------------------------------
 // Helpers

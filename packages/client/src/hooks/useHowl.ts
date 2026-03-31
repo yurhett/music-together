@@ -10,7 +10,30 @@ import {
 } from '@/lib/constants'
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
-import type { AudioFacade } from './usePlayerSync'
+
+export interface AudioFacade {
+  unload: () => void
+  play: (id?: number) => number
+  pause: () => void
+  seek: (val?: number) => number
+  volume: (val?: number) => number
+  duration: () => number
+  playing: () => boolean
+  fade: (from: number, to: number, durationMs: number) => void
+  rate: (val?: number) => number
+}
+
+export interface AudioFacade {
+  unload: () => void
+  play: (id?: number) => number
+  pause: () => void
+  seek: (val?: number) => number
+  volume: (val?: number) => number
+  duration: () => number
+  playing: () => boolean
+  fade: (from: number, to: number, durationMs: number) => void
+  rate: (val?: number) => number
+}
 
 /** If playback reports playing() but currentTime doesn't advance for this
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
@@ -68,6 +91,13 @@ function createAudioFacade(audioEl: HTMLAudioElement | null): AudioFacade | null
         }
       }, stepTime)
     },
+    rate: (val?: number) => {
+      if (val !== undefined) {
+        audioEl.playbackRate = val
+        return val
+      }
+      return audioEl.playbackRate
+    }
   }
 }
 
@@ -149,24 +179,25 @@ export function useHowl(onTrackEnd: () => void) {
 
       if (!track.streamUrl || !globalHtmlAudio) return
 
+      const audioEl = globalHtmlAudio
       const loadStartTime = Date.now()
       const currentVolume = usePlayerStore.getState().volume
 
       // Clear old listeners safely
-      globalHtmlAudio.onloadeddata = null
-      globalHtmlAudio.onplaying = null
-      globalHtmlAudio.onplay = null
-      globalHtmlAudio.onpause = null
-      globalHtmlAudio.onended = null
-      globalHtmlAudio.onerror = null
+      audioEl.onloadeddata = null
+      audioEl.onplaying = null
+      audioEl.onplay = null
+      audioEl.onpause = null
+      audioEl.onended = null
+      audioEl.onerror = null
 
-      globalHtmlAudio.volume = 0
-      globalHtmlAudio.src = track.streamUrl
+      audioEl.volume = 0
+      audioEl.src = track.streamUrl
       
       let hasPlayedOnce = false
 
-      globalHtmlAudio.onloadeddata = () => {
-        const d = globalHtmlAudio.duration
+      audioEl.onloadeddata = () => {
+        const d = audioEl.duration
         if (Number.isFinite(d) && d > 0) {
           usePlayerStore.getState().setDuration(d)
         }
@@ -175,7 +206,7 @@ export function useHowl(onTrackEnd: () => void) {
           if (seekTo && seekTo > 0) {
             usePlayerStore.getState().setCurrentTime(seekTo)
           }
-          globalHtmlAudio.play().catch((e) => {
+          audioEl.play().catch((e) => {
             console.error('Audio play error:', e)
           })
           
@@ -187,47 +218,47 @@ export function useHowl(onTrackEnd: () => void) {
             }
           }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
         } else {
-          if (seekTo && seekTo > 0) globalHtmlAudio.currentTime = seekTo
-          globalHtmlAudio.volume = currentVolume
+          if (seekTo && seekTo > 0) audioEl.currentTime = seekTo
+          audioEl.volume = currentVolume
           usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
           syncReadyRef.current = true
         }
       }
 
-      globalHtmlAudio.onplaying = () => {
+      audioEl.onplaying = () => {
         if (!hasPlayedOnce && autoPlay) {
           hasPlayedOnce = true
           const elapsed = (Date.now() - loadStartTime) / 1000
           const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
           if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-            globalHtmlAudio.currentTime = seekTarget
+            audioEl.currentTime = seekTarget
           }
         }
         usePlayerStore.getState().setIsPlaying(true)
-        const dur = globalHtmlAudio.duration
+        const dur = audioEl.duration
         if (Number.isFinite(dur) && dur > 0) {
           usePlayerStore.getState().setDuration(dur)
         }
         startTimeUpdate()
       }
 
-      globalHtmlAudio.onpause = () => {
+      audioEl.onpause = () => {
         usePlayerStore.getState().setIsPlaying(false)
         stopTimeUpdate()
       }
 
-      globalHtmlAudio.onended = () => {
+      audioEl.onended = () => {
         usePlayerStore.getState().setIsPlaying(false)
         stopTimeUpdate()
         onTrackEnd()
       }
 
-      globalHtmlAudio.onerror = () => {
+      audioEl.onerror = () => {
         if (!retryRef.current) {
           retryRef.current = true
           console.warn('Audio load error, retrying')
-          globalHtmlAudio.load()
-          if (autoPlay) globalHtmlAudio.play().catch(()=>{})
+          audioEl.load()
+          if (autoPlay) audioEl.play().catch(()=>{})
           return
         }
         retryRef.current = false
@@ -236,7 +267,7 @@ export function useHowl(onTrackEnd: () => void) {
         onTrackEnd()
       }
 
-      globalHtmlAudio.load()
+      audioEl.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, startTimeUpdate, stopTimeUpdate],
