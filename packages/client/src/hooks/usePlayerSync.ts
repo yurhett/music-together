@@ -1,11 +1,7 @@
 import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import {
   DRIFT_SEEK_THRESHOLD_MS,
-  DRIFT_DEAD_ZONE_MS,
-  DRIFT_RATE_KP,
-  MAX_RATE_ADJUSTMENT,
   DRIFT_SMOOTH_ALPHA,
-  DRIFT_PLUGIN_SEEK_THRESHOLD_MS,
   CONDUCTOR_REPORT_INTERVAL_MS,
   CONDUCTOR_REPORT_FAST_INTERVAL_MS,
   CONDUCTOR_REPORT_FAST_DURATION_MS,
@@ -37,29 +33,19 @@ function scheduleDelay(serverTimeToExecute: number): number {
   return Math.max(0, serverTimeToExecute - getServerTime())
 }
 
-/** Clamp a value between -limit and +limit. */
-function clamp(value: number, limit: number): number {
-  return Math.max(-limit, Math.min(limit, value))
-}
-
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
 /**
  * Manages playback sync via **event-driven Scheduled Execution**
- * with periodic **proportional drift correction + EMA smoothing**:
+ * and checks for drift periodically:
  *
- *   |smoothedDrift| > 200ms → hard seek (audible jump, rare)
- *   |smoothedDrift| 30~200ms → proportional rate adjustment
- *                              rate = 1 - clamp(drift * Kp, ±0.02)
- *   |smoothedDrift| < 30ms  → reset to normal rate 1.0x (dead zone)
+ *   If |smoothedDrift| exceeds threshold (e.g. 3s) → hard seek
+ *   Otherwise do nothing, letting normal playback roll.
  *
  * The EMA low-pass filter smooths noisy drift measurements to prevent
- * the control loop from oscillating between speed-up and slow-down.
- *
- * If a browser speed plugin (e.g. Global Speed) overrides the rate,
- * rate correction is automatically disabled and only hard seek is used.
+ * jittery visual/store updates, and avoids excessive hard hooks.
  */
 export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
   const { socket } = useSocketContext()
@@ -70,12 +56,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   // Monotonic action ID — guards against stale setTimeout(fn, 0) callbacks
   // when rapid events arrive in the same event loop tick.
   const actionIdRef = useRef(0)
-  // When true, rate() micro-adjustment is disabled (browser plugin detected)
-  const rateDisabledRef = useRef(false)
-  // Consecutive count of rate override detections (require 3 to confirm plugin)
-  const rateOverrideCountRef = useRef(0)
-  // Timer for the 50ms rate-override detection check (stored so we can clear it)
-  const rateCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // EMA-smoothed drift value (seconds) — persists across sync responses
   const smoothedDriftRef = useRef(0)
   // When true, next sync response seeds EMA directly instead of blending,
@@ -187,12 +167,9 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     // -- NEW TRACK (PLAYER_PLAY) ---------------------------------------------
     // When a new track loads, cancel any pending action from the previous track
     // so it doesn't accidentally seek/pause/resume the new Howl instance.
-    // Also reset rate-disabled flag to give the new track a fresh chance.
     const onPlay = () => {
       clearScheduled()
       ++actionIdRef.current // invalidate any pending stale callbacks
-      rateDisabledRef.current = false
-      rateOverrideCountRef.current = 0
       smoothedDriftRef.current = 0
       emaColdStartRef.current = true
       trackStartTimeRef.current = Date.now()
@@ -240,50 +217,16 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       // Update store with smoothed value so UI shows stable drift reading
       usePlayerStore.getState().setSyncDrift(sd)
 
-      // When rate correction is disabled (plugin detected), use a lower
-      // seek threshold so drifts don't go uncorrected.
-      const hardSeekThreshold = rateDisabledRef.current
-        ? DRIFT_PLUGIN_SEEK_THRESHOLD_MS / 1000
-        : DRIFT_SEEK_THRESHOLD_MS / 1000
+      const hardSeekThreshold = DRIFT_SEEK_THRESHOLD_MS / 1000
 
       if (absDrift > hardSeekThreshold) {
-        // Large drift (or any noticeable drift when rate is disabled): hard seek
+        // Large drift: hard seek
         howlRef.current.seek(expectedTime)
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         smoothedDriftRef.current = 0
         emaColdStartRef.current = true
-      } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
-        // 宽限期内跳过 rate 微调 — 等 conductor report 稳定后再启用
-        if (inGracePeriod) return
-        // Proportional rate correction: larger drift → stronger correction,
-        // naturally decelerating as we approach the target — no oscillation.
-        const adj = clamp(sd * DRIFT_RATE_KP, MAX_RATE_ADJUSTMENT)
-        const targetRate = 1 - adj
-        howlRef.current.rate(targetRate)
-        // Verify rate was applied — detect browser speed plugin interference.
-        // Use setTimeout instead of rAF to avoid false positives when the tab
-        // is in background (rAF is throttled/paused by browsers).
-        // Require 3 consecutive detections to confirm a plugin, not just one.
-        // Clear previous check timer to avoid stacking on rapid sync responses.
-        if (rateCheckTimerRef.current) clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = setTimeout(() => {
-          rateCheckTimerRef.current = null
-          if (!howlRef.current) return
-          if (Math.abs(howlRef.current.rate() - targetRate) > 0.005) {
-            rateOverrideCountRef.current++
-            if (rateOverrideCountRef.current >= 3) {
-              rateDisabledRef.current = true
-              console.warn(
-                'Rate correction disabled: external plugin detected (confirmed after 3 consecutive overrides)',
-              )
-            }
-          } else {
-            // Rate applied successfully — reset counter
-            rateOverrideCountRef.current = 0
-          }
-        }, 50)
       } else {
-        // Within dead zone: ensure normal playback rate
+        // Ensure normal playback rate (no micro-adjustments)
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
       }
     }
@@ -296,10 +239,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
 
     return () => {
       clearScheduled()
-      if (rateCheckTimerRef.current) {
-        clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = null
-      }
       socket.off(EVENTS.PLAYER_SEEK, onSeek)
       socket.off(EVENTS.PLAYER_PAUSE, onPause)
       socket.off(EVENTS.PLAYER_RESUME, onResume)
