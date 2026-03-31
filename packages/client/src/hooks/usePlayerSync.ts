@@ -14,8 +14,18 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
-import type { Howl } from 'howler'
 import { useEffect, useRef, type RefObject } from 'react'
+
+export interface AudioFacade {
+  unload: () => void
+  play: (id?: number) => number
+  pause: () => void
+  seek: (val?: number) => number
+  volume: (val?: number) => number
+  duration: () => number
+  playing: () => boolean
+  fade: (from: number, to: number, durationMs: number) => void
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,7 +56,7 @@ function scheduleDelay(serverTimeToExecute: number): number {
  * The EMA low-pass filter smooths noisy drift measurements to prevent
  * jittery visual/store updates, and avoids excessive hard hooks.
  */
-export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
+export function usePlayerSync(howlRef: RefObject<AudioFacade | null>, soundIdRef: RefObject<number | undefined>) {
   const { socket } = useSocketContext()
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
 

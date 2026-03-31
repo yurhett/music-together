@@ -12,8 +12,6 @@ import { useLyric } from './useLyric'
 import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
-import { holdAudioSession, releaseAudioSession } from '@/lib/audioUnlock'
-
 /**
  * Composing hook: useHowl + useLyric + usePlayerSync.
  * Provides unified playback controls.
@@ -28,16 +26,12 @@ export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
 
-  const next = useCallback(() => {
-    holdAudioSession()
-    socket.emit(EVENTS.PLAYER_NEXT)
-  }, [socket])
+  const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
   // Auto-next on song end: only the current conductor (hostId) emits PLAYER_NEXT.
   // The conductor is auto-elected by the server (owner > admin > member).
   // Other clients silently wait to prevent duplicate PLAYER_NEXT events.
   const autoNext = useCallback(() => {
-    holdAudioSession()
     const { room } = useRoomStore.getState()
     const myId = storage.getUserId()
     if (room?.hostId === myId) {
@@ -154,7 +148,6 @@ export function usePlayer() {
       // Server has cleared the track (queue empty / cleared) — reset client
       if (!roomTrack && playerTrack) {
         hasRecovered = true
-        releaseAudioSession()
         if (howlRef.current) {
           try {
             howlRef.current.unload()
@@ -207,7 +200,6 @@ export function usePlayer() {
   // to ALL clients (including us) via scheduled execution.
   // -----------------------------------------------------------------------
   const play = useCallback(() => {
-    holdAudioSession()
     socket.emit(EVENTS.PLAYER_PLAY)
   }, [socket])
 
@@ -224,10 +216,7 @@ export function usePlayer() {
     [socket],
   )
 
-  const prev = useCallback(() => {
-    holdAudioSession()
-    socket.emit(EVENTS.PLAYER_PREV)
-  }, [socket])
+  const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
 
   return { play, pause, seek, next, prev }
 }

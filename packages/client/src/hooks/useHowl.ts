@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { Howl } from 'howler'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
 import {
@@ -9,37 +8,94 @@ import {
   LOAD_COMPENSATION_THRESHOLD_S,
   MAX_LOAD_COMPENSATION_S,
 } from '@/lib/constants'
-import { holdAudioSession, releaseAudioSession } from '@/lib/audioUnlock'
 import { toast } from 'sonner'
-
-/** Max wait (ms) for Howler `unlock` event before giving up and skipping */
-const PLAY_ERROR_TIMEOUT_MS = 3000
+import { globalHtmlAudio } from '@/lib/singletonAudio'
+import type { AudioFacade } from './usePlayerSync'
 
 /** If playback reports playing() but currentTime doesn't advance for this
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
 const STALLED_TIMEOUT_MS = 8000
 
+function createAudioFacade(audioEl: HTMLAudioElement | null): AudioFacade | null {
+  if (!audioEl) return null
+  return {
+    unload: () => {
+      audioEl.pause()
+      audioEl.removeAttribute('src')
+      audioEl.load()
+    },
+    play: () => {
+      audioEl.play().catch(() => {})
+      return 1
+    },
+    pause: () => {
+      audioEl.pause()
+    },
+    seek: (val?: number) => {
+      if (val !== undefined) {
+        audioEl.currentTime = val
+        return val
+      }
+      return audioEl.currentTime
+    },
+    volume: (val?: number) => {
+      if (val !== undefined) {
+        audioEl.volume = Math.max(0, Math.min(1, val))
+        return val
+      }
+      return audioEl.volume
+    },
+    duration: () => audioEl.duration || 0,
+    playing: () => !audioEl.paused && !audioEl.ended && audioEl.readyState > 0,
+    fade: (from: number, to: number, durationMs: number) => {
+      audioEl.volume = from
+      const steps = 20
+      const stepTime = Math.max(10, durationMs / steps)
+      const stepVol = (to - from) / steps
+      let currentStep = 0
+      
+      const el = audioEl as any
+      if (el._fadeInterval) clearInterval(el._fadeInterval)
+      
+      el._fadeInterval = setInterval(() => {
+        currentStep++
+        let nextVol = from + stepVol * currentStep
+        if (nextVol < 0) nextVol = 0
+        if (nextVol > 1) nextVol = 1
+        audioEl.volume = nextVol
+        if (currentStep >= steps) {
+          clearInterval(el._fadeInterval)
+        }
+      }, stepTime)
+    },
+  }
+}
+
 /**
- * Manages a Howl audio instance with two-phase loading strategy:
- * Phase 1: Create Howl with volume=0 (silent)
- * Phase 2: onload → seek to target → delay → fade-in unmute
+ * Manages playback via a Singleton HTMLAudioElement.
+ * Bypassing Howler completely here allows us to retain iOS Safari
+ * background playing permissions by never recreating the strict <audio> element.
  */
 export function useHowl(onTrackEnd: () => void) {
-  const howlRef = useRef<Howl | null>(null)
+  const howlRef = useRef<AudioFacade | null>(null)
   const soundIdRef = useRef<number | undefined>(undefined)
   const animFrameRef = useRef<number>(0)
   const syncReadyRef = useRef(false)
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const playErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTimeUpdateRef = useRef(0)
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
 
-  // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
 
-  // Throttled time update loop with stalled detection
+  // Initialize facade once
+  useEffect(() => {
+    if (!howlRef.current && globalHtmlAudio) {
+      howlRef.current = createAudioFacade(globalHtmlAudio)
+    }
+  }, [])
+
   const startTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
     stalledRef.current = { lastSeek: -1, since: 0 }
@@ -51,21 +107,16 @@ export function useHowl(onTrackEnd: () => void) {
           const seekVal = howlRef.current.seek() as number
           usePlayerStore.getState().setCurrentTime(seekVal)
 
-          // Stalled detection: if currentTime hasn't moved for STALLED_TIMEOUT_MS
-          // while playing() is true, the stream likely broke mid-playback.
           const st = stalledRef.current
           if (Math.abs(seekVal - st.lastSeek) < 0.05) {
             if (st.since > 0 && now - st.since > STALLED_TIMEOUT_MS) {
               console.warn('Playback stalled, skipping track')
               toast.error('播放中断，已跳到下一首')
               stalledRef.current = { lastSeek: -1, since: 0 }
-              holdAudioSession()
               onTrackEnd()
               return
             }
-            // still stalled but not timed out yet — keep since
           } else {
-            // time moved — reset stalled tracker
             stalledRef.current = { lastSeek: seekVal, since: now }
           }
         }
@@ -79,172 +130,129 @@ export function useHowl(onTrackEnd: () => void) {
     cancelAnimationFrame(animFrameRef.current)
   }, [])
 
-  // Load and play a track
   const loadTrack = useCallback(
     (track: Track, seekTo?: number, autoPlay = true) => {
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
         unmuteTimerRef.current = null
       }
-      // Clear any pending play-error timeout from the previous track so it
-      // doesn't fire onTrackEnd() and skip the new track being loaded.
-      if (playErrorTimerRef.current) {
-        clearTimeout(playErrorTimerRef.current)
-        playErrorTimerRef.current = null
-      }
 
-      if (howlRef.current) {
-        try {
-          howlRef.current.unload()
-        } catch {
-          /* ignore */
-        }
-        howlRef.current = null
+      if (globalHtmlAudio) {
+        globalHtmlAudio.pause()
         stopTimeUpdate()
       }
 
       syncReadyRef.current = false
-      soundIdRef.current = undefined
+      soundIdRef.current = 1
       trackTitleRef.current = track.title
       retryRef.current = false
 
-      if (!track.streamUrl) return
+      if (!track.streamUrl || !globalHtmlAudio) return
 
       const loadStartTime = Date.now()
       const currentVolume = usePlayerStore.getState().volume
 
-      const howl = new Howl({
-        src: [track.streamUrl],
-        html5: true,
-        format: ['flac', 'm4a', 'ogg', 'mp3'],
-        volume: 0,
-        onload: () => {
-          if (howlRef.current !== howl) return // Stale instance guard
-          const d = howl.duration()
-          if (Number.isFinite(d) && d > 0) {
-            usePlayerStore.getState().setDuration(d)
-          }
-          if (autoPlay) {
-            if (seekTo && seekTo > 0) {
-              // Update store immediately so AMLL lyrics jump to correct position
-              usePlayerStore.getState().setCurrentTime(seekTo)
-            }
-            soundIdRef.current = howl.play()
-            howl.once('play', () => {
-              if (howlRef.current !== howl) return
-              const elapsed = (Date.now() - loadStartTime) / 1000
-              const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
-              // seekTo > 0: must seek to correct position (+ loading compensation)
-              // seekTo === 0: only compensate if loading took significant time
-              if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-                howl.seek(seekTarget)
-              }
-            })
-            unmuteTimerRef.current = setTimeout(
-              () => {
-                if (howlRef.current === howl) {
-                  const latestVolume = usePlayerStore.getState().volume
-                  howl.fade(0, latestVolume, 200) // Smooth fade-in with latest volume
-                  syncReadyRef.current = true
-                }
-              },
-              seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
-            )
-          } else {
-            releaseAudioSession() // Release hold if track was loaded in paused state
-            if (seekTo && seekTo > 0) howl.seek(seekTo)
-            howl.volume(currentVolume)
-            usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
-            syncReadyRef.current = true
-          }
-        },
-        onplay: () => {
-          releaseAudioSession()
-          usePlayerStore.getState().setIsPlaying(true)
-          const dur = howl.duration()
-          if (Number.isFinite(dur) && dur > 0) {
-            usePlayerStore.getState().setDuration(dur)
-          }
-          startTimeUpdate()
-        },
-        onpause: () => {
-          releaseAudioSession()
-          usePlayerStore.getState().setIsPlaying(false)
-          stopTimeUpdate()
-        },
-        onend: () => {
-          holdAudioSession()
-          usePlayerStore.getState().setIsPlaying(false)
-          stopTimeUpdate()
-          onTrackEnd()
-        },
-        onloaderror: (_id, msg) => {
-          // If a newer track has been loaded, this Howl is stale — ignore.
-          if (howlRef.current !== howl) return
-          if (!retryRef.current) {
-            retryRef.current = true
-            console.warn('Howl load error, retrying:', msg)
-            howl.load()
-            return
-          }
-          retryRef.current = false
-          console.error('Howl load error (after retry):', msg)
-          toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
-          holdAudioSession()
-          onTrackEnd()
-        },
-        onplayerror: function (soundId: number) {
-          // Try to recover via Howler unlock; give up after timeout
-          if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)
-          playErrorTimerRef.current = setTimeout(() => {
-            playErrorTimerRef.current = null
-            console.warn('Howl unlock timeout, skipping track')
-            toast.error('播放失败，已跳到下一首')
-            holdAudioSession()
-            onTrackEnd()
-          }, PLAY_ERROR_TIMEOUT_MS)
-          howl.once('unlock', () => {
-            if (howlRef.current !== howl) return // Already switched or unmounted
-            if (playErrorTimerRef.current) {
-              clearTimeout(playErrorTimerRef.current)
-              playErrorTimerRef.current = null
-            }
-            howl.play(soundId)
-          })
-        },
-      })
+      // Clear old listeners safely
+      globalHtmlAudio.onloadeddata = null
+      globalHtmlAudio.onplaying = null
+      globalHtmlAudio.onplay = null
+      globalHtmlAudio.onpause = null
+      globalHtmlAudio.onended = null
+      globalHtmlAudio.onerror = null
 
-      howlRef.current = howl
+      globalHtmlAudio.volume = 0
+      globalHtmlAudio.src = track.streamUrl
+      
+      let hasPlayedOnce = false
+
+      globalHtmlAudio.onloadeddata = () => {
+        const d = globalHtmlAudio.duration
+        if (Number.isFinite(d) && d > 0) {
+          usePlayerStore.getState().setDuration(d)
+        }
+        
+        if (autoPlay) {
+          if (seekTo && seekTo > 0) {
+            usePlayerStore.getState().setCurrentTime(seekTo)
+          }
+          globalHtmlAudio.play().catch((e) => {
+            console.error('Audio play error:', e)
+          })
+          
+          unmuteTimerRef.current = setTimeout(() => {
+            if (howlRef.current) {
+              const latestVolume = usePlayerStore.getState().volume
+              howlRef.current.fade(0, latestVolume, 200)
+              syncReadyRef.current = true
+            }
+          }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
+        } else {
+          if (seekTo && seekTo > 0) globalHtmlAudio.currentTime = seekTo
+          globalHtmlAudio.volume = currentVolume
+          usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
+          syncReadyRef.current = true
+        }
+      }
+
+      globalHtmlAudio.onplaying = () => {
+        if (!hasPlayedOnce && autoPlay) {
+          hasPlayedOnce = true
+          const elapsed = (Date.now() - loadStartTime) / 1000
+          const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
+          if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+            globalHtmlAudio.currentTime = seekTarget
+          }
+        }
+        usePlayerStore.getState().setIsPlaying(true)
+        const dur = globalHtmlAudio.duration
+        if (Number.isFinite(dur) && dur > 0) {
+          usePlayerStore.getState().setDuration(dur)
+        }
+        startTimeUpdate()
+      }
+
+      globalHtmlAudio.onpause = () => {
+        usePlayerStore.getState().setIsPlaying(false)
+        stopTimeUpdate()
+      }
+
+      globalHtmlAudio.onended = () => {
+        usePlayerStore.getState().setIsPlaying(false)
+        stopTimeUpdate()
+        onTrackEnd()
+      }
+
+      globalHtmlAudio.onerror = () => {
+        if (!retryRef.current) {
+          retryRef.current = true
+          console.warn('Audio load error, retrying')
+          globalHtmlAudio.load()
+          if (autoPlay) globalHtmlAudio.play().catch(()=>{})
+          return
+        }
+        retryRef.current = false
+        console.error('Audio load error (after retry)')
+        toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+        onTrackEnd()
+      }
+
+      globalHtmlAudio.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, startTimeUpdate, stopTimeUpdate],
   )
 
-  // Volume sync
   useEffect(() => {
-    if (howlRef.current && syncReadyRef.current) {
-      howlRef.current.volume(volume)
+    if (syncReadyRef.current && globalHtmlAudio) {
+      globalHtmlAudio.volume = volume
     }
   }, [volume])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
         unmuteTimerRef.current = null
-      }
-      if (playErrorTimerRef.current) {
-        clearTimeout(playErrorTimerRef.current)
-        playErrorTimerRef.current = null
-      }
-      if (howlRef.current) {
-        try {
-          howlRef.current.unload()
-        } catch {
-          /* ignore */
-        }
-        howlRef.current = null
       }
       stopTimeUpdate()
     }
