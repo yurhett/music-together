@@ -23,15 +23,16 @@ export async function unlockAudio(): Promise<void> {
 
   // 2. Unlock the global native HTMLAudioElement for iOS Background playback
   if (globalHtmlAudio) {
-    globalHtmlAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
-    globalHtmlAudio.volume = 0
+    const audioEl = globalHtmlAudio
+    audioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+    audioEl.volume = 0
     
     // Play synchronously, then pause immediately to keep the audio element "active" 
     // but paused, which prevents iOS from releasing the background audio token.
-    const p = globalHtmlAudio.play()
+    const p = audioEl.play()
     if (p !== undefined) {
       p.then(() => {
-        globalHtmlAudio.pause()
+        audioEl.pause()
       }).catch(() => {})
     }
   }
