@@ -9,6 +9,7 @@ import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
+import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
 /**
@@ -40,6 +41,9 @@ export function usePlayer() {
 
   const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
+
+  // Connect media session for system controls (e.g. iOS lock screen)
+  useMediaSession()
 
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
   usePlayerSync(howlRef, soundIdRef)
