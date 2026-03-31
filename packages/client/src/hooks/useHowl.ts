@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { Track } from '@music-together/shared'
+import type { Track, PlayMode } from '@music-together/shared'
+import { useRoomStore } from '@/stores/roomStore'
 import { usePlayerStore } from '@/stores/playerStore'
 import {
   CURRENT_TIME_THROTTLE_MS,
@@ -10,6 +11,35 @@ import {
 } from '@/lib/constants'
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
+
+function getNextTrackClient(queue: Track[], currentTrack: Track | null, playMode: PlayMode): Track | null {
+  if (queue.length === 0) return null
+  const currentIndex = currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : -1
+
+  switch (playMode) {
+    case 'loop-one':
+      if (currentTrack && currentIndex >= 0) return currentTrack
+      return queue[0] ?? null
+    case 'loop-all': {
+      const nextIndex = currentIndex + 1
+      return nextIndex < queue.length ? queue[nextIndex] : queue[0]
+    }
+    case 'shuffle': {
+      if (queue.length === 1) return queue[0]
+      // Use standard sequential as fallback for shuffle prediction
+      // unless server has already pre-fetched a specific random track
+      const preFetched = queue.find((t, i) => i !== currentIndex && t.streamUrl)
+      if (preFetched) return preFetched
+      const nextIndex = currentIndex + 1
+      return nextIndex < queue.length ? queue[nextIndex] : queue[0]
+    }
+    case 'sequential':
+    default: {
+      const nextIndex = currentIndex + 1
+      return nextIndex < queue.length ? queue[nextIndex] : null
+    }
+  }
+}
 
 export interface AudioFacade {
   unload: () => void
@@ -239,6 +269,26 @@ export function useHowl(onTrackEnd: () => void) {
       audioEl.onended = () => {
         usePlayerStore.getState().setIsPlaying(false)
         stopTimeUpdate()
+        
+        // --- GAPLESS SWAP FOR iOS SAFARI BACKGROUND ---
+        // If we know the next track and it already has a resolved streamUrl (pre-fetched by server),
+        // we synchronously update the src and play() right now. This avoids losing the background
+        // media session lock which drops if we wait for asynchronous websocket replies.
+        const roomStore = useRoomStore.getState().room
+        if (roomStore && globalHtmlAudio) {
+          const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
+          if (nextTrack && nextTrack.streamUrl) {
+            console.log('[Gapless] Synchronously swapping to next track:', nextTrack.title)
+            audioEl.src = nextTrack.streamUrl
+            audioEl.play().catch((e: any) => console.error('[Gapless] auto-play failed', e))
+            // We tell our UI we are playing the new track immediately
+            usePlayerStore.getState().setCurrentTrack(nextTrack)
+            usePlayerStore.getState().setIsPlaying(true)
+            trackTitleRef.current = nextTrack.title
+            // (Note: startTimeUpdate will hook up when onplaying triggers)
+          }
+        }
+        
         onTrackEnd()
       }
 
@@ -260,7 +310,7 @@ export function useHowl(onTrackEnd: () => void) {
       // Changing .src implicitly begins the load algorithm.
       
       if (autoPlay) {
-        audioEl.play().catch((e) => {
+        audioEl.play().catch((e: any) => {
           console.error('Audio sync play error:', e)
         })
       } else {
