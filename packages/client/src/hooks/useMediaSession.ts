@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
+import { holdAudioSession } from '@/lib/audioUnlock'
 
 export function useMediaSession() {
   const { socket } = useSocketContext()
@@ -19,14 +20,17 @@ export function useMediaSession() {
       })
 
       navigator.mediaSession.setActionHandler('nexttrack', () => {
+        holdAudioSession()
         socket.emit(EVENTS.PLAYER_NEXT)
       })
 
       navigator.mediaSession.setActionHandler('previoustrack', () => {
+        holdAudioSession()
         socket.emit(EVENTS.PLAYER_PREV)
       })
 
       navigator.mediaSession.setActionHandler('play', () => {
+        holdAudioSession()
         socket.emit(EVENTS.PLAYER_PLAY)
       })
 

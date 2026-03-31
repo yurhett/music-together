@@ -9,6 +9,7 @@ import {
   LOAD_COMPENSATION_THRESHOLD_S,
   MAX_LOAD_COMPENSATION_S,
 } from '@/lib/constants'
+import { holdAudioSession, releaseAudioSession } from '@/lib/audioUnlock'
 import { toast } from 'sonner'
 
 /** Max wait (ms) for Howler `unlock` event before giving up and skipping */
@@ -58,6 +59,7 @@ export function useHowl(onTrackEnd: () => void) {
               console.warn('Playback stalled, skipping track')
               toast.error('播放中断，已跳到下一首')
               stalledRef.current = { lastSeek: -1, since: 0 }
+              holdAudioSession()
               onTrackEnd()
               return
             }
@@ -149,6 +151,7 @@ export function useHowl(onTrackEnd: () => void) {
               seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
             )
           } else {
+            releaseAudioSession() // Release hold if track was loaded in paused state
             if (seekTo && seekTo > 0) howl.seek(seekTo)
             howl.volume(currentVolume)
             usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
@@ -156,6 +159,7 @@ export function useHowl(onTrackEnd: () => void) {
           }
         },
         onplay: () => {
+          releaseAudioSession()
           usePlayerStore.getState().setIsPlaying(true)
           const dur = howl.duration()
           if (Number.isFinite(dur) && dur > 0) {
@@ -164,10 +168,12 @@ export function useHowl(onTrackEnd: () => void) {
           startTimeUpdate()
         },
         onpause: () => {
+          releaseAudioSession()
           usePlayerStore.getState().setIsPlaying(false)
           stopTimeUpdate()
         },
         onend: () => {
+          holdAudioSession()
           usePlayerStore.getState().setIsPlaying(false)
           stopTimeUpdate()
           onTrackEnd()
@@ -184,6 +190,7 @@ export function useHowl(onTrackEnd: () => void) {
           retryRef.current = false
           console.error('Howl load error (after retry):', msg)
           toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+          holdAudioSession()
           onTrackEnd()
         },
         onplayerror: function (soundId: number) {
@@ -193,6 +200,7 @@ export function useHowl(onTrackEnd: () => void) {
             playErrorTimerRef.current = null
             console.warn('Howl unlock timeout, skipping track')
             toast.error('播放失败，已跳到下一首')
+            holdAudioSession()
             onTrackEnd()
           }, PLAY_ERROR_TIMEOUT_MS)
           howl.once('unlock', () => {

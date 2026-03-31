@@ -21,6 +21,12 @@ export async function unlockAudio(): Promise<void> {
   }
 
   // 2. Play a silent WAV to force-activate (iOS Safari compat)
+  playSilentAudio()
+
+  unlocked = true
+}
+
+export function playSilentAudio(): void {
   const silentHowl = new Howl({
     src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='],
     volume: 0,
@@ -28,6 +34,35 @@ export async function unlockAudio(): Promise<void> {
   })
   silentHowl.play()
   silentHowl.once('end', () => silentHowl.unload())
-
-  unlocked = true
 }
+
+let silentLoopHolder: Howl | null = null
+
+/**
+ * Starts playing a silent, looping audio track.
+ * Keeps the iOS audio session alive in the background while waiting
+ * for network requests (e.g. changing tracks) to complete.
+ */
+export function holdAudioSession(): void {
+  if (!silentLoopHolder) {
+    silentLoopHolder = new Howl({
+      src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='],
+      volume: 0,
+      loop: true,
+      html5: true,
+    })
+  }
+  if (!silentLoopHolder.playing()) {
+    silentLoopHolder.play()
+  }
+}
+
+/**
+ * Stops the silent looping audio track once real playback has started.
+ */
+export function releaseAudioSession(): void {
+  if (silentLoopHolder && silentLoopHolder.playing()) {
+    silentLoopHolder.pause()
+  }
+}
+
