@@ -27,7 +27,7 @@ export const CONDUCTOR_REPORT_FAST_DURATION_MS = 10_000
 export const SYNC_REQUEST_INTERVAL_MS = 2_000
 
 /** Drift threshold (ms) before hard-seeking to correct position */
-export const DRIFT_SEEK_THRESHOLD_MS = 200
+export const DRIFT_SEEK_THRESHOLD_MS = 3000
 
 /** Dead zone (ms) — below this drift we restore rate to 1.0 (no correction) */
 export const DRIFT_DEAD_ZONE_MS = 30
