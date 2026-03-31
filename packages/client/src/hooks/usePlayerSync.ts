@@ -7,7 +7,6 @@ import {
   CONDUCTOR_REPORT_FAST_DURATION_MS,
   MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
-  DRIFT_GRACE_PERIOD_MS,
 } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -186,11 +185,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       const { room: syncRoom } = useRoomStore.getState()
       const myId = storage.getUserId()
       if (syncRoom?.hostId === myId) return
-
-      // Grace period after new track: skip rate micro-adjustments
-      // (estimateCurrentTime is unreliable until conductor submits at least
-      // one progress report), but still allow hard seek for large drifts.
-      const inGracePeriod = Date.now() - trackStartTimeRef.current < DRIFT_GRACE_PERIOD_MS
 
       // Use NTP-calibrated server time for accurate delay estimation
       const networkDelaySec = Math.max(

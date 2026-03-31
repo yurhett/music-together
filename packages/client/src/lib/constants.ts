@@ -32,10 +32,6 @@ export const DRIFT_SEEK_THRESHOLD_MS = 3_000
 /** EMA smoothing factor for drift measurements (0–1, higher = more responsive) */
 export const DRIFT_SMOOTH_ALPHA = 0.3
 
-/** Grace period (ms) after new track before drift correction activates.
- *  Allows at least one conductor report to correct estimateCurrentTime. */
-export const DRIFT_GRACE_PERIOD_MS = 3_000
-
 /** Safety clamp for network delay estimation (seconds) — prevents clock-skew outliers */
 export const MAX_NETWORK_DELAY_S = 5
 
