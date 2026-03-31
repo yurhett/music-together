@@ -7,7 +7,6 @@
  */
 export const globalHtmlAudio = typeof window !== 'undefined' ? new Audio() : null
 if (globalHtmlAudio) {
-  globalHtmlAudio.crossOrigin = 'anonymous'
   // Prevent iOS locking when swapping sources
   globalHtmlAudio.autoplay = false
 }

@@ -184,20 +184,19 @@ export function useHowl(onTrackEnd: () => void) {
       
       let hasPlayedOnce = false
 
-      audioEl.onloadeddata = () => {
+      audioEl.onloadedmetadata = () => {
         const d = audioEl.duration
         if (Number.isFinite(d) && d > 0) {
           usePlayerStore.getState().setDuration(d)
         }
-        
+        if (seekTo && seekTo > 0) {
+          audioEl.currentTime = seekTo
+          usePlayerStore.getState().setCurrentTime(seekTo)
+        }
+      }
+
+      audioEl.onloadeddata = () => {
         if (autoPlay) {
-          if (seekTo && seekTo > 0) {
-            usePlayerStore.getState().setCurrentTime(seekTo)
-          }
-          audioEl.play().catch((e) => {
-            console.error('Audio play error:', e)
-          })
-          
           unmuteTimerRef.current = setTimeout(() => {
             if (howlRef.current) {
               const latestVolume = usePlayerStore.getState().volume
@@ -206,9 +205,7 @@ export function useHowl(onTrackEnd: () => void) {
             }
           }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
         } else {
-          if (seekTo && seekTo > 0) audioEl.currentTime = seekTo
           audioEl.volume = currentVolume
-          usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
           syncReadyRef.current = true
         }
       }
@@ -242,10 +239,10 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       audioEl.onerror = () => {
-        if (!retryRef.current) {
+        if (!retryRef.current && globalHtmlAudio) {
           retryRef.current = true
           console.warn('Audio load error, retrying')
-          audioEl.load()
+          // audioEl.load() // Removed to avoid iOS lock loss
           if (autoPlay) audioEl.play().catch(()=>{})
           return
         }
@@ -255,7 +252,17 @@ export function useHowl(onTrackEnd: () => void) {
         onTrackEnd()
       }
 
-      audioEl.load()
+      // DO NOT call audioEl.load() explicitly, as it drops the unlocked state on iOS Safari.
+      // Changing .src implicitly begins the load algorithm.
+      
+      if (autoPlay) {
+        audioEl.play().catch((e) => {
+          console.error('Audio sync play error:', e)
+        })
+      } else {
+        usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
+      }
+      
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, startTimeUpdate, stopTimeUpdate],

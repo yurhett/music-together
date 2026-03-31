@@ -25,7 +25,15 @@ export async function unlockAudio(): Promise<void> {
   if (globalHtmlAudio) {
     globalHtmlAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
     globalHtmlAudio.volume = 0
-    await globalHtmlAudio.play().catch(() => {})
+    
+    // Play synchronously, then pause immediately to keep the audio element "active" 
+    // but paused, which prevents iOS from releasing the background audio token.
+    const p = globalHtmlAudio.play()
+    if (p !== undefined) {
+      p.then(() => {
+        globalHtmlAudio.pause()
+      }).catch(() => {})
+    }
   }
 
   // 3. Play a silent WAV to force-activate Howler WebAudio
