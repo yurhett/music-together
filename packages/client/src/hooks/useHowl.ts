@@ -220,7 +220,8 @@ export function useHowl(onTrackEnd: () => void) {
 
       stopTimeUpdate()
       syncReadyRef.current = false
-      soundIdRef.current = 1
+      const currentLoadId = Date.now()
+      soundIdRef.current = currentLoadId
       trackTitleRef.current = track.title
       retryRef.current = false
 
@@ -235,7 +236,7 @@ export function useHowl(onTrackEnd: () => void) {
       
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
-        if (globalAudio.src !== track.streamUrl) return
+        if (soundIdRef.current !== currentLoadId) return
 
         const d = globalAudio.duration
         if (Number.isFinite(d) && d > 0) {
@@ -249,7 +250,7 @@ export function useHowl(onTrackEnd: () => void) {
           }
           
           globalAudio.play().then(() => {
-            if (globalAudio.src !== track.streamUrl) return
+            if (soundIdRef.current !== currentLoadId) return
             
             const elapsed = (Date.now() - loadStartTime) / 1000
             const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
@@ -289,7 +290,6 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       globalAudio.addEventListener('canplay', onCanPlay)
-      globalAudio.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, stopTimeUpdate],
