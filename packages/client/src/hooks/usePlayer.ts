@@ -9,7 +9,6 @@ import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
-import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
 /**
@@ -41,9 +40,6 @@ export function usePlayer() {
 
   const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
-
-  // Connect media session for system controls (e.g. iOS lock screen)
-  useMediaSession()
 
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
   usePlayerSync(howlRef, soundIdRef)
@@ -89,26 +85,6 @@ export function usePlayer() {
       })
 
       const ct = data.playState.currentTime
-      const elapsed = data.playState.isPlaying
-        ? Math.max(0, (getServerTime() - data.playState.serverTimestamp) / 1000)
-        : 0
-      const expectedTime = ct + elapsed
-
-      // If the client has already seamlessly swapped to the new track and is playing it
-      // in reasonable sync, do not interrupt playback with a redundant loadTrack.
-      const currentTrackId = usePlayerStore.getState().currentTrack?.id
-      const isPlaying = howlRef.current?.playing()
-      const currentSeek = (howlRef.current?.seek() as number) || 0
-      if (
-        currentTrackId === data.track.id &&
-        isPlaying &&
-        data.playState.isPlaying &&
-        Math.abs(currentSeek - expectedTime) < 2
-      ) {
-        // Just update lyric context if needed without reloading the audio element
-        fetchLyric(data.track)
-        return
-      }
 
       if (ct === 0 && data.playState.serverTimeToExecute) {
         // New track from position 0: schedule load so playback begins at

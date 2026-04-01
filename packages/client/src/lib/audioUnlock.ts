@@ -1,5 +1,4 @@
 import { Howl, Howler } from 'howler'
-import { globalHtmlAudio } from './singletonAudio'
 
 let unlocked = false
 
@@ -21,27 +20,11 @@ export async function unlockAudio(): Promise<void> {
     await ctx.resume()
   }
 
-  // 2. Unlock the global native HTMLAudioElement for iOS Background playback
-  if (globalHtmlAudio) {
-    const audioEl = globalHtmlAudio
-    audioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
-    audioEl.volume = 0
-    
-    // Play synchronously, then pause immediately to keep the audio element "active" 
-    // but paused, which prevents iOS from releasing the background audio token.
-    const p = audioEl.play()
-    if (p !== undefined) {
-      p.then(() => {
-        audioEl.pause()
-      }).catch(() => {})
-    }
-  }
-
-  // 3. Play a silent WAV to force-activate Howler WebAudio
+  // 2. Play a silent WAV to force-activate (iOS Safari compat)
   const silentHowl = new Howl({
     src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='],
     volume: 0,
-    html5: false, // Explicitly WebAudio unlock
+    html5: true,
   })
   silentHowl.play()
   silentHowl.once('end', () => silentHowl.unload())

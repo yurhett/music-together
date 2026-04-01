@@ -176,30 +176,6 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   broadcastRoomList(io)
 
   logger.info(`Playing: ${resolved.title} in room ${roomId}`, { roomId })
-
-  // --- PREFETCH NEXT TRACK ---
-  // To support gapless/background playback on iOS Safari, we resolve the streamUrl
-  // for the next track in advance and update the queue.
-  setTimeout(async () => {
-    const nextTrack = queueService.getNextTrack(roomId, room.playMode)
-    if (nextTrack && !nextTrack.streamUrl) {
-      try {
-        const cookie = authService.getAnyCookie(nextTrack.source, roomId)
-        const url = await resolveStreamUrl(nextTrack.source, nextTrack.urlId, room.audioQuality, cookie ?? undefined)
-        if (url) {
-          nextTrack.streamUrl = url
-          // Broadcast to clients so they have the pre-resolved URL for seamless gapless transition
-          const currentRoom = roomRepo.get(roomId)
-          if (currentRoom) {
-            io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: currentRoom.queue })
-          }
-        }
-      } catch (err) {
-        // Ignore prefetch errors silently
-      }
-    }
-  }, 100)
-
   return true
 }
 
