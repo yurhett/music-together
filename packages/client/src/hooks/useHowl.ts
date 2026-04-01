@@ -179,6 +179,11 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleError = () => {
+      // Ignore user/browser fetch aborts (happens naturally when changing track src mid-fetch)
+      if (globalAudio.error?.code === 1 /* MEDIA_ERR_ABORTED */) {
+        return
+      }
+
       if (!retryRef.current && globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         retryRef.current = true
         console.warn('Audio load error, retrying:', globalAudio.error)
@@ -220,8 +225,7 @@ export function useHowl(onTrackEnd: () => void) {
 
       stopTimeUpdate()
       syncReadyRef.current = false
-      const currentLoadId = Date.now()
-      soundIdRef.current = currentLoadId
+      soundIdRef.current = 1
       trackTitleRef.current = track.title
       retryRef.current = false
 
@@ -234,9 +238,28 @@ export function useHowl(onTrackEnd: () => void) {
       globalAudio.volume = 0
       globalAudio.playbackRate = 1
       
+      if (autoPlay) {
+        // Fire play() immediately BEFORE 'canplay' to maintain the MediaSession continuity
+        // on Android Chrome. Otherwise, waiting for 'canplay' causes the session to be torn down.
+        globalAudio.play().catch(e => {
+          if (e.name === 'AbortError') return // User skipped or fetched new track rapidly
+          if (document.hidden) return
+          playErrorTimerRef.current = setTimeout(() => {
+            if (document.hidden) {
+              playErrorTimerRef.current = null
+              return
+            }
+            playErrorTimerRef.current = null
+            console.warn('Native Audio play error/timeout, skipping track', e)
+            toast.error('播放失败，已跳到下一首')
+            onTrackEnd()
+          }, PLAY_ERROR_TIMEOUT_MS)
+        })
+      }
+
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
-        if (soundIdRef.current !== currentLoadId) return
+        if (globalAudio.src !== track.streamUrl) return
 
         const d = globalAudio.duration
         if (Number.isFinite(d) && d > 0) {
@@ -244,32 +267,13 @@ export function useHowl(onTrackEnd: () => void) {
         }
 
         if (autoPlay) {
-          if (seekTo && seekTo > 0) {
-            usePlayerStore.getState().setCurrentTime(seekTo)
-            globalAudio.currentTime = seekTo
-          }
+          const elapsed = (Date.now() - loadStartTime) / 1000
+          const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
           
-          globalAudio.play().then(() => {
-            if (soundIdRef.current !== currentLoadId) return
-            
-            const elapsed = (Date.now() - loadStartTime) / 1000
-            const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
-            if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-              globalAudio.currentTime = seekTarget
-            }
-          }).catch(e => {
-            if (document.hidden) return
-            playErrorTimerRef.current = setTimeout(() => {
-              if (document.hidden) {
-                playErrorTimerRef.current = null
-                return
-              }
-              playErrorTimerRef.current = null
-              console.warn('Native Audio play error/timeout, skipping track', e)
-              toast.error('播放失败，已跳到下一首')
-              onTrackEnd()
-            }, PLAY_ERROR_TIMEOUT_MS)
-          })
+          if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+            usePlayerStore.getState().setCurrentTime(seekTarget)
+            globalAudio.currentTime = seekTarget
+          }
 
           unmuteTimerRef.current = setTimeout(
             () => {
