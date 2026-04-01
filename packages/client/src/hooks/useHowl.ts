@@ -179,11 +179,7 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleError = () => {
-      // Ignore user/browser fetch aborts (happens naturally when changing track src mid-fetch)
-      if (globalAudio.error?.code === 1 /* MEDIA_ERR_ABORTED */) {
-        return
-      }
-
+      console.error('[Audio Debug] Error event triggered. Error code:', globalAudio.error?.code, 'Message:', globalAudio.error?.message, 'Current Src:', globalAudio.src)
       if (!retryRef.current && globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         retryRef.current = true
         console.warn('Audio load error, retrying:', globalAudio.error)
@@ -238,25 +234,6 @@ export function useHowl(onTrackEnd: () => void) {
       globalAudio.volume = 0
       globalAudio.playbackRate = 1
       
-      if (autoPlay) {
-        // Fire play() immediately BEFORE 'canplay' to maintain the MediaSession continuity
-        // on Android Chrome. Otherwise, waiting for 'canplay' causes the session to be torn down.
-        globalAudio.play().catch(e => {
-          if (e.name === 'AbortError') return // User skipped or fetched new track rapidly
-          if (document.hidden) return
-          playErrorTimerRef.current = setTimeout(() => {
-            if (document.hidden) {
-              playErrorTimerRef.current = null
-              return
-            }
-            playErrorTimerRef.current = null
-            console.warn('Native Audio play error/timeout, skipping track', e)
-            toast.error('播放失败，已跳到下一首')
-            onTrackEnd()
-          }, PLAY_ERROR_TIMEOUT_MS)
-        })
-      }
-
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
@@ -267,13 +244,38 @@ export function useHowl(onTrackEnd: () => void) {
         }
 
         if (autoPlay) {
-          const elapsed = (Date.now() - loadStartTime) / 1000
-          const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
-          
-          if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-            usePlayerStore.getState().setCurrentTime(seekTarget)
-            globalAudio.currentTime = seekTarget
+          if (seekTo && seekTo > 0) {
+            usePlayerStore.getState().setCurrentTime(seekTo)
+            globalAudio.currentTime = seekTo
           }
+          
+          globalAudio.play().then(() => {
+            console.log('[Audio Debug] play() resolved successfully from promise.')
+            if (globalAudio.src !== track.streamUrl) return
+            
+            const elapsed = (Date.now() - loadStartTime) / 1000
+            const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
+            if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+              console.log('[Audio Debug] Adjusting currentTime to target:', seekTarget)
+              globalAudio.currentTime = seekTarget
+            }
+          }).catch(e => {
+            console.error('[Audio Debug] play() promise rejected with error:', e.name, e.message)
+            if (document.hidden) {
+              console.log('[Audio Debug] document is hidden, ignoring autoplay restriction reject')
+              return
+            }
+            playErrorTimerRef.current = setTimeout(() => {
+              if (document.hidden) {
+                playErrorTimerRef.current = null
+                return
+              }
+              playErrorTimerRef.current = null
+              console.warn('Native Audio play error/timeout, skipping track', e)
+              toast.error('播放失败，已跳到下一首')
+              onTrackEnd()
+            }, PLAY_ERROR_TIMEOUT_MS)
+          })
 
           unmuteTimerRef.current = setTimeout(
             () => {
@@ -294,6 +296,7 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       globalAudio.addEventListener('canplay', onCanPlay)
+      globalAudio.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, stopTimeUpdate],
