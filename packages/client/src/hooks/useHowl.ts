@@ -179,7 +179,6 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleError = () => {
-      console.error('[Audio Debug] Error event triggered. Error code:', globalAudio.error?.code, 'Message:', globalAudio.error?.message, 'Current Src:', globalAudio.src)
       if (!retryRef.current && globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         retryRef.current = true
         console.warn('Audio load error, retrying:', globalAudio.error)
@@ -233,65 +232,7 @@ export function useHowl(onTrackEnd: () => void) {
       globalAudio.src = track.streamUrl
       globalAudio.volume = 0
       globalAudio.playbackRate = 1
-      if (seekTo !== undefined && seekTo >= 0) {
-        globalAudio.currentTime = seekTo
-      }
-      // Update global audio store sync. This triggers useMediaSession metadata
-      usePlayerStore.getState().setCurrentTrack(track)
-      if (seekTo && seekTo > 0) {
-        usePlayerStore.getState().setCurrentTime(seekTo)
-      }
-      globalAudio.load()
-
-      // CRITICAL FOR IOS/ANDROID BACKGROUND PLAYBACK FOCUS:
-      // MUST call play() SYNCHRONOUSLY immediately after updating src & metadata.
-      // Doing this inside `canplay` or `loadeddata` causes the hardware OS audio
-      // focus / media session lockscreen to tear down!
-      if (autoPlay) {
-        globalAudio.play().then(() => {
-          console.log('[Audio Debug] play() resolved successfully from promise.')
-          if (globalAudio.src !== track.streamUrl) return
-          
-          const elapsed = (Date.now() - loadStartTime) / 1000
-          const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
-          if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-            console.log('[Audio Debug] Adjusting currentTime to target:', seekTarget)
-            globalAudio.currentTime = seekTarget
-          }
-        }).catch(e => {
-          console.error('[Audio Debug] play() promise rejected with error:', e.name, e.message)
-          if (document.hidden) {
-            console.log('[Audio Debug] document is hidden, ignoring autoplay restriction reject')
-            return
-          }
-          playErrorTimerRef.current = setTimeout(() => {
-            if (document.hidden) {
-              playErrorTimerRef.current = null
-              return
-            }
-            playErrorTimerRef.current = null
-            console.warn('Native Audio play error/timeout, skipping track', e)
-            toast.error('播放失败，已跳到下一首')
-            onTrackEnd()
-          }, PLAY_ERROR_TIMEOUT_MS)
-        })
-
-        unmuteTimerRef.current = setTimeout(
-          () => {
-            if (globalAudio.src === track.streamUrl) {
-              const latestVolume = usePlayerStore.getState().volume
-              fadeAudio(0, latestVolume, 200)
-              syncReadyRef.current = true
-            }
-          },
-          seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
-        )
-      } else {
-        globalAudio.volume = currentVolume
-        usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
-        syncReadyRef.current = true
-      }
-
+      
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
@@ -300,9 +241,56 @@ export function useHowl(onTrackEnd: () => void) {
         if (Number.isFinite(d) && d > 0) {
           usePlayerStore.getState().setDuration(d)
         }
+
+        if (autoPlay) {
+          if (seekTo && seekTo > 0) {
+            usePlayerStore.getState().setCurrentTime(seekTo)
+            globalAudio.currentTime = seekTo
+          }
+          
+          globalAudio.play().then(() => {
+            if (globalAudio.src !== track.streamUrl) return
+            
+            const elapsed = (Date.now() - loadStartTime) / 1000
+            const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
+            if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+              globalAudio.currentTime = seekTarget
+            }
+          }).catch(e => {
+            if (document.hidden) return
+            playErrorTimerRef.current = setTimeout(() => {
+              if (document.hidden) {
+                playErrorTimerRef.current = null
+                return
+              }
+              playErrorTimerRef.current = null
+              console.warn('Native Audio play error/timeout, skipping track', e)
+              toast.error('播放失败，已跳到下一首')
+              onTrackEnd()
+            }, PLAY_ERROR_TIMEOUT_MS)
+          })
+
+          unmuteTimerRef.current = setTimeout(
+            () => {
+              if (globalAudio.src === track.streamUrl) {
+                const latestVolume = usePlayerStore.getState().volume
+                fadeAudio(0, latestVolume, 200)
+                syncReadyRef.current = true
+              }
+            },
+            seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
+          )
+        } else {
+          if (seekTo && seekTo > 0) globalAudio.currentTime = seekTo
+          globalAudio.volume = currentVolume
+          usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
+          syncReadyRef.current = true
+        }
       }
 
       globalAudio.addEventListener('canplay', onCanPlay)
+      globalAudio.load()
+      usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, stopTimeUpdate],
   )
