@@ -47,7 +47,7 @@ function scheduleDelay(serverTimeToExecute: number): number {
  * The EMA low-pass filter smooths noisy drift measurements to prevent
  * jittery visual/store updates, and avoids excessive hard hooks.
  */
-export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
+export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<number | undefined>) {
   const { socket } = useSocketContext()
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
 
