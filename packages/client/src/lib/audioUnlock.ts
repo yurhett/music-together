@@ -27,11 +27,13 @@ export async function unlockAudio(): Promise<void> {
     audioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
     audioEl.volume = 0
     
-    // Play synchronously, and let it finish playing naturally (do not call pause()).
-    // This establishes the user gesture context for the audio token on iOS PWA.
+    // Play synchronously, then pause immediately to keep the audio element "active" 
+    // but paused, which prevents iOS from releasing the background audio token.
     const p = audioEl.play()
     if (p !== undefined) {
-      p.catch(() => {})
+      p.then(() => {
+        audioEl.pause()
+      }).catch(() => {})
     }
   }
 
