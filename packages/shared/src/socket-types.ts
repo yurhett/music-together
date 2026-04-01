@@ -78,6 +78,7 @@ export interface ClientToServerEvents {
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
   [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
+  [EVENTS.PLAYER_RESUME]: () => void
   [EVENTS.PLAYER_PAUSE]: () => void
   [EVENTS.PLAYER_SEEK]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_NEXT]: () => void
