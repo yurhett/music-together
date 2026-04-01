@@ -25,7 +25,9 @@ export async function unlockAudio(): Promise<void> {
   if (globalHtmlAudio) {
     const audioEl = globalHtmlAudio
     audioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+    audioEl.load()
     audioEl.volume = 0
+    audioEl.currentTime = 0
     
     // Play synchronously, then pause immediately to keep the audio element "active" 
     // but paused, which prevents iOS from releasing the background audio token.
@@ -33,6 +35,7 @@ export async function unlockAudio(): Promise<void> {
     if (p !== undefined) {
       p.then(() => {
         audioEl.pause()
+        audioEl.currentTime = 0
       }).catch(() => {})
     }
   }

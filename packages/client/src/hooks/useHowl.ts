@@ -215,8 +215,6 @@ export function useHowl(onTrackEnd: () => void) {
 
       audioEl.volume = 0
       audioEl.src = track.streamUrl
-      // Explicitly load prevents iOS PWA from getting stuck when shifting from broken states
-      audioEl.load()
       
       let hasPlayedOnce = false
 
@@ -282,7 +280,6 @@ export function useHowl(onTrackEnd: () => void) {
           if (nextTrack && nextTrack.streamUrl) {
             console.log('[Gapless] Synchronously swapping to next track:', nextTrack.title)
             audioEl.src = nextTrack.streamUrl
-            audioEl.load() // Flush old buffers completely for strict iOS WebKit compliance
             audioEl.play().catch((e: any) => console.error('[Gapless] auto-play failed', e))
             // We tell our UI we are playing the new track immediately
             usePlayerStore.getState().setCurrentTrack(nextTrack)
@@ -299,18 +296,13 @@ export function useHowl(onTrackEnd: () => void) {
         if (!retryRef.current && globalHtmlAudio) {
           retryRef.current = true
           console.warn('Audio load error, retrying')
-          audioEl.load() // Explicitly retry
+          // audioEl.load() // Removed to avoid iOS lock loss
           if (autoPlay) audioEl.play().catch(()=>{})
           return
         }
         retryRef.current = false
         console.error('Audio load error (after retry)')
         toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
-        
-        // UNBRICK the iOS media element after a fatal error
-        audioEl.removeAttribute('src')
-        audioEl.load()
-        
         onTrackEnd()
       }
 

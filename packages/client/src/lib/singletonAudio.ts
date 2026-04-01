@@ -6,27 +6,9 @@
  * 并确保在首次用户交互时（unlockAudio）赋予其播放权限。
  */
 export const globalHtmlAudio = typeof window !== 'undefined' ? new Audio() : null
-if (globalHtmlAudio && typeof document !== 'undefined') {
+if (globalHtmlAudio) {
   // Prevent iOS locking when swapping sources
   globalHtmlAudio.autoplay = false
-  // Crucial for iOS PWA Standalone background playback
+  globalHtmlAudio.playsInline = true
   globalHtmlAudio.preload = 'auto'
-  globalHtmlAudio.setAttribute('playsinline', 'true')
-  globalHtmlAudio.setAttribute('webkit-playsinline', 'true')
-
-  // Append to DOM to prevent aggressive suspension in PWA
-  globalHtmlAudio.id = 'music-together-singleton'
-  globalHtmlAudio.style.display = 'none'
-
-  const appendAudio = () => {
-    if (!document.getElementById('music-together-singleton')) {
-      document.body.appendChild(globalHtmlAudio)
-    }
-  }
-
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    appendAudio()
-  } else {
-    window.addEventListener('DOMContentLoaded', appendAudio)
-  }
 }
