@@ -12,7 +12,6 @@ import {
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
 import { getNextTrackClient } from '@/lib/queueUtils'
-import { getSilentBlobUrl } from '@/lib/silentAudio'
 
 export interface AudioFacade {
   unload: () => void
@@ -257,8 +256,9 @@ export function useHowl(onTrackEnd: () => void) {
         stopTimeUpdate()
         
         // --- GAPLESS SWAP & BACKGROUND EXEMPTION FOR iOS SAFARI ---
-        // 为了对抗后台因网络等待抛出 loading 导致悬空挂起的问题，以及防止由于后续 Socket 事件导致的 AbortError，
-        // 我们不再试图在一首音乐结束时直接在此使用可能尚未解析好的 streamUrl，而是统一以极高权重的 Blob 零延迟锁焦点！
+        // 抛弃容易引发兼容和解码出错的基站静音包。直接利用当前这首已知而且合法的流媒体，
+        // 将音量清零，并且退回 0 的位置开启单曲循环，依靠这个真实的网络资源当作底层保活锁！
+        // 当后续真正的 loadTrack 接到 WebSocket 通知时，它接替这个现成的存活锁切歌。
         const roomStore = useRoomStore.getState().room
         if (roomStore && globalHtmlAudio) {
           const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
@@ -269,10 +269,11 @@ export function useHowl(onTrackEnd: () => void) {
           }
           
           audioEl.loop = true
-          audioEl.src = getSilentBlobUrl()
+          audioEl.volume = 0
+          audioEl.currentTime = 0
           audioEl.play().catch((e: any) => {
-            console.error('[Background] silent auto-play failed', e)
-            toast.error(`[Background] auto-play failed: ${e.message}`)
+            console.error('[Background] rewind auto-play failed', e)
+            toast.error(`[Background] auto-play fallback failed: ${e.message}`)
           })
         }
 

@@ -5,7 +5,6 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import { getNextTrackClient, getPrevTrackClient } from '@/lib/queueUtils'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
-import { getSilentBlobUrl } from '@/lib/silentAudio'
 import { toast } from 'sonner'
 
 export function useMediaSession() {
@@ -66,12 +65,12 @@ export function useMediaSession() {
           usePlayerStore.getState().setIsPlaying(true)
         }
         
-        // 彻底告别乐观请求网络流造成的加载延迟和连接性挂断。只需用极速响应的静音 Blob 瞬间锁住焦点即可
-        globalHtmlAudio.loop = true
-        globalHtmlAudio.src = getSilentBlobUrl()
+        // 【核心】使用当前已缓存加载完的歌曲，零音量继续播放充当后台驻留锁！
+        // 避开了伪造跨域/ Blob URL 导致 Safari 拒绝解析的 "NotSupportedError"。
+        globalHtmlAudio.volume = 0
         globalHtmlAudio.play().catch((e) => {
-          console.error('[MediaSession] next play silent failed:', e)
-          toast.error(`[Next] Silent fallback failed: ${e.message}`)
+          console.error('[MediaSession] next play volume0 failed:', e)
+          toast.error(`[Next] Guard fallback failed: ${e.message}`)
         })
       }
       socket.emit(EVENTS.PLAYER_NEXT)
@@ -87,11 +86,10 @@ export function useMediaSession() {
           usePlayerStore.getState().setIsPlaying(true)
         }
         
-        globalHtmlAudio.loop = true
-        globalHtmlAudio.src = getSilentBlobUrl()
+        globalHtmlAudio.volume = 0
         globalHtmlAudio.play().catch((e) => {
-          console.error('[MediaSession] prev play silent failed:', e)
-          toast.error(`[Prev] Silent fallback failed: ${e.message}`)
+          console.error('[MediaSession] prev play volume0 failed:', e)
+          toast.error(`[Prev] Guard fallback failed: ${e.message}`)
         })
       }
       socket.emit(EVENTS.PLAYER_PREV)
