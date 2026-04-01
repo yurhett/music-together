@@ -272,7 +272,10 @@ export function useHowl(onTrackEnd: () => void) {
         if (!hasValidNextTrack && globalHtmlAudio) {
           audioEl.loop = true
           audioEl.src = SILENT_AUDIO_BASE64
-          audioEl.play().catch((e: any) => console.error('[Background] silent auto-play failed', e))
+          audioEl.play().catch((e: any) => {
+            console.error('[Background] silent auto-play failed', e)
+            toast.error(`[Background] auto-play failed: ${e.message}`)
+          })
         }
 
         onTrackEnd()
