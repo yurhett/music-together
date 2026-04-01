@@ -12,7 +12,7 @@ import {
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
 import { getNextTrackClient } from '@/lib/queueUtils'
-import { SILENT_AUDIO_BASE64 } from '@/lib/silentAudio'
+import { startKeepAlive, stopKeepAlive } from '@/lib/keepAliveAudio'
 
 export interface AudioFacade {
   unload: () => void
@@ -186,21 +186,8 @@ export function useHowl(onTrackEnd: () => void) {
       audioEl.onended = null
       audioEl.onerror = null
 
-      let isSameSrc = false
-      if (track.streamUrl) {
-        try {
-          const targetUrl = new URL(track.streamUrl, window.location.origin).href
-          if (audioEl.src === targetUrl) {
-            isSameSrc = true
-          }
-        } catch(e) {}
-      }
-
-      if (!isSameSrc) {
-        audioEl.loop = false // 关掉为前一个空白保活片段开启的 loop
-        audioEl.volume = 0
-        audioEl.src = track.streamUrl
-      }
+      audioEl.volume = 0
+      audioEl.src = track.streamUrl
       
       let hasPlayedOnce = false
 
@@ -239,6 +226,8 @@ export function useHowl(onTrackEnd: () => void) {
             audioEl.currentTime = seekTarget
           }
         }
+        // 真实音频开始播放，停止保活音频（如果正在运行）
+        stopKeepAlive()
         usePlayerStore.getState().setIsPlaying(true)
         const dur = audioEl.duration
         if (Number.isFinite(dur) && dur > 0) {
@@ -257,39 +246,30 @@ export function useHowl(onTrackEnd: () => void) {
         stopTimeUpdate()
         
         // --- GAPLESS SWAP FOR iOS SAFARI BACKGROUND ---
-        // If we know the next track and it already has a resolved streamUrl (pre-fetched by server),
-        // we synchronously update the src and play() right now. This avoids losing the background
-        // media session lock which drops if we wait for asynchronous websocket replies.
+        // 当歌曲播完，必须在同步调用栈中立即启动下一段音频，
+        // 否则 WebKit 会在 1-2 秒内挂起整个网页。
+        let gaplessSwapped = false
         const roomStore = useRoomStore.getState().room
-        let hasValidNextTrack = false
         if (roomStore && globalHtmlAudio) {
           const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
           if (nextTrack && nextTrack.streamUrl) {
             console.log('[Gapless] Synchronously swapping to next track:', nextTrack.title)
-            audioEl.loop = false
             audioEl.src = nextTrack.streamUrl
             audioEl.play().catch((e: any) => console.error('[Gapless] auto-play failed', e))
-            // We tell our UI we are playing the new track immediately
             usePlayerStore.getState().setCurrentTrack(nextTrack)
             usePlayerStore.getState().setIsPlaying(true)
             trackTitleRef.current = nextTrack.title
-            hasValidNextTrack = true
-            // (Note: startTimeUpdate will hook up when onplaying triggers)
+            gaplessSwapped = true
           }
         }
-        
-        // --- BACKGROUND PLAYING EXEMPTION ---
-        // 若没有提前拉取到合法的 nextTrack 链接，播一段静音来保活！防止 Safari 立刻挂起，
-        // 这样 JS 和网络连接得以存活，以完成稍后到达的 websocket 状态推送和 track stream 请求。
-        if (!hasValidNextTrack && globalHtmlAudio) {
-          audioEl.loop = true
-          audioEl.src = SILENT_AUDIO_BASE64
-          audioEl.play().catch((e: any) => {
-            console.error('[Background] silent auto-play failed', e)
-            toast.error(`[Background] auto-play failed: ${e.message}`)
-          })
-        }
 
+        // 如果 gapless swap 失败（streamUrl 尚未预取），
+        // 启动保活音频防止 iOS 在等待服务端响应期间挂起页面
+        if (!gaplessSwapped) {
+          console.log('[Gapless] No streamUrl available, starting keepAlive bridge')
+          startKeepAlive()
+        }
+        
         onTrackEnd()
       }
 
@@ -310,34 +290,12 @@ export function useHowl(onTrackEnd: () => void) {
       // DO NOT call audioEl.load() explicitly, as it drops the unlocked state on iOS Safari.
       // Changing .src implicitly begins the load algorithm.
       
-      if (!isSameSrc) {
-        if (autoPlay) {
-          audioEl.play().catch((e: any) => {
-            console.error('Audio sync play error:', e)
-          })
-        } else {
-          usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
-        }
+      if (autoPlay) {
+        audioEl.play().catch((e: any) => {
+          console.error('Audio sync play error:', e)
+        })
       } else {
-        console.log('[loadTrack] Stream URL is identical! Skipping hard reload.')
-        if (autoPlay) {
-          audioEl.play().catch(() => {})
-        }
-        if (audioEl.readyState >= 2) { // 至少有当前帧的数据
-           if (autoPlay && howlRef.current) {
-               howlRef.current.fade(0, currentVolume, 200)
-               syncReadyRef.current = true
-           } else {
-               audioEl.volume = currentVolume
-               syncReadyRef.current = true
-           }
-        }
-        if (!audioEl.paused) {
-           usePlayerStore.getState().setIsPlaying(true)
-           const dur = audioEl.duration
-           if (Number.isFinite(dur) && dur > 0) usePlayerStore.getState().setDuration(dur)
-           startTimeUpdate()
-        }
+        usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
       }
       
       usePlayerStore.getState().setCurrentTrack(track)

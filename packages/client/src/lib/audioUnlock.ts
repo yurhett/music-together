@@ -1,5 +1,6 @@
 import { Howl, Howler } from 'howler'
 import { globalHtmlAudio } from './singletonAudio'
+import { unlockKeepAlive } from './keepAliveAudio'
 
 let unlocked = false
 
@@ -8,9 +9,9 @@ export function isAudioUnlocked(): boolean {
 }
 
 /**
- * Call within a real user interaction (click / keydown).
- * Unlocks the Howler global AudioContext so all subsequent
- * playback works without further interaction.
+ * 在真实用户交互（click / keydown）中调用。
+ * 解锁 Howler AudioContext、全局 HTMLAudioElement、
+ * 以及 iOS 后台保活用的第二音频元素。
  */
 export async function unlockAudio(): Promise<void> {
   if (unlocked) return
@@ -45,6 +46,9 @@ export async function unlockAudio(): Promise<void> {
   })
   silentHowl.play()
   silentHowl.once('end', () => silentHowl.unload())
+
+  // 4. 解锁 iOS 后台保活用的第二音频元素
+  unlockKeepAlive()
 
   unlocked = true
 }
