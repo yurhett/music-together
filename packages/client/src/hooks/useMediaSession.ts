@@ -5,7 +5,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import { getNextTrackClient, getPrevTrackClient } from '@/lib/queueUtils'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
-import { SILENT_AUDIO_BASE64 } from '@/lib/silentAudio'
+import { getSilentBlobUrl } from '@/lib/silentAudio'
 import { toast } from 'sonner'
 
 export function useMediaSession() {
@@ -58,28 +58,21 @@ export function useMediaSession() {
 
     const handleNext = () => {
       console.log('[MediaSession] handleNext triggered')
-      // 乐观更新机制：如果本地已经取到 streamUrl 则直接塞给音频元素并播放，防 Safari 杀后台媒体锁
       const roomStore = useRoomStore.getState().room
       if (roomStore && globalHtmlAudio) {
         const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
-        if (nextTrack && nextTrack.streamUrl) {
-          globalHtmlAudio.loop = false
-          globalHtmlAudio.src = nextTrack.streamUrl
-          globalHtmlAudio.play().catch((e) => {
-            console.error('[MediaSession] next play URL failed:', e)
-            toast.error(`[Next] URL play failed: ${e.message}`)
-          })
+        if (nextTrack) {
           usePlayerStore.getState().setCurrentTrack(nextTrack)
           usePlayerStore.getState().setIsPlaying(true)
-        } else {
-          // 如果没有则使用静音音频来维系后台锁，等待 Socket 事件带来的真实变更触发 loadTrack
-          globalHtmlAudio.loop = true
-          globalHtmlAudio.src = SILENT_AUDIO_BASE64
-          globalHtmlAudio.play().catch((e) => {
-            console.error('[MediaSession] next play silent failed:', e)
-            toast.error(`[Next] Silent play failed: ${e.message}`)
-          })
         }
+        
+        // 彻底告别乐观请求网络流造成的加载延迟和连接性挂断。只需用极速响应的静音 Blob 瞬间锁住焦点即可
+        globalHtmlAudio.loop = true
+        globalHtmlAudio.src = getSilentBlobUrl()
+        globalHtmlAudio.play().catch((e) => {
+          console.error('[MediaSession] next play silent failed:', e)
+          toast.error(`[Next] Silent fallback failed: ${e.message}`)
+        })
       }
       socket.emit(EVENTS.PLAYER_NEXT)
     }
@@ -89,24 +82,17 @@ export function useMediaSession() {
       const roomStore = useRoomStore.getState().room
       if (roomStore && globalHtmlAudio) {
         const prevTrack = getPrevTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
-        if (prevTrack && prevTrack.streamUrl) {
-          globalHtmlAudio.loop = false
-          globalHtmlAudio.src = prevTrack.streamUrl
-          globalHtmlAudio.play().catch((e) => {
-            console.error('[MediaSession] prev play URL failed:', e)
-            toast.error(`[Prev] URL play failed: ${e.message}`)
-          })
+        if (prevTrack) {
           usePlayerStore.getState().setCurrentTrack(prevTrack)
           usePlayerStore.getState().setIsPlaying(true)
-        } else {
-          // 同样使用静音音频来维系后台锁
-          globalHtmlAudio.loop = true
-          globalHtmlAudio.src = SILENT_AUDIO_BASE64
-          globalHtmlAudio.play().catch((e) => {
-            console.error('[MediaSession] prev play silent failed:', e)
-            toast.error(`[Prev] Silent play failed: ${e.message}`)
-          })
         }
+        
+        globalHtmlAudio.loop = true
+        globalHtmlAudio.src = getSilentBlobUrl()
+        globalHtmlAudio.play().catch((e) => {
+          console.error('[MediaSession] prev play silent failed:', e)
+          toast.error(`[Prev] Silent fallback failed: ${e.message}`)
+        })
       }
       socket.emit(EVENTS.PLAYER_PREV)
     }
