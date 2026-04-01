@@ -15,6 +15,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import type { Howl } from 'howler'
+import { Howler } from 'howler'
 import { useEffect, useRef, type RefObject } from 'react'
 
 // ---------------------------------------------------------------------------
@@ -285,6 +286,8 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     // so the server's playState is refreshed after potential setTimeout throttling.
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return
+
+      // 1. conductor 报告：让服务端立即刷新 playState（已有逻辑，保留）
       const { room: r } = useRoomStore.getState()
       const myId = storage.getUserId()
       if (r?.hostId === myId && howlRef.current?.playing()) {
@@ -292,6 +295,23 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
           currentTime: howlRef.current.seek() as number,
           hostServerTime: getServerTime(),
         })
+      }
+
+      // 2. 恢复 AudioContext：iOS Safari 后台会将 AudioContext 设置为 suspended
+      //    回到前台时必须手动 resume，否则 howl.play() 静默失败
+      const ctx = Howler.ctx
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().then(() => {
+          // AudioContext 恢复后，如果房间状态表明应该播放但 howl 未在播放，重新触发
+          const { room: r2 } = useRoomStore.getState()
+          if (r2?.playState.isPlaying && howlRef.current && !howlRef.current.playing()) {
+            if (soundIdRef.current !== undefined) {
+              howlRef.current.play(soundIdRef.current)
+            } else {
+              soundIdRef.current = howlRef.current.play()
+            }
+          }
+        }).catch(() => {/* AudioContext resume 失败，等待用户交互 */})
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange)

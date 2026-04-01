@@ -9,6 +9,7 @@ import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
+import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
 /**
@@ -213,6 +214,15 @@ export function usePlayer() {
   )
 
   const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
+
+  // 接入 Media Session API，为 iOS 锁屏控制中心提供切歌、元数据、进度条
+  useMediaSession({
+    onNext: next,
+    onPrev: prev,
+    onPlay: play,
+    onPause: pause,
+    onSeek: seek,
+  })
 
   return { play, pause, seek, next, prev }
 }

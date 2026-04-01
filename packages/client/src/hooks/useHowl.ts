@@ -26,7 +26,7 @@ const STALLED_TIMEOUT_MS = 8000
 export function useHowl(onTrackEnd: () => void) {
   const howlRef = useRef<Howl | null>(null)
   const soundIdRef = useRef<number | undefined>(undefined)
-  const animFrameRef = useRef<number>(0)
+  const animFrameRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const syncReadyRef = useRef(false)
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const playErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -34,15 +34,22 @@ export function useHowl(onTrackEnd: () => void) {
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
+  // 存储 visibilitychange 清理函数，避免 memory leak
+  const visibilityCleanupRef = useRef<(() => void) | null>(null)
 
   // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
 
-  // Throttled time update loop with stalled detection
+  // 后台节流阈值：iOS Safari 在后台对 setInterval 节流至约 1s
+  // 前台用 CURRENT_TIME_THROTTLE_MS(100ms) 保持精度，后台降至 1000ms 避免被冻结。
   const startTimeUpdate = useCallback(() => {
-    cancelAnimationFrame(animFrameRef.current)
+    if (animFrameRef.current !== null) {
+      clearInterval(animFrameRef.current)
+      animFrameRef.current = null
+    }
     stalledRef.current = { lastSeek: -1, since: 0 }
-    const update = () => {
+
+    const tick = () => {
       if (howlRef.current && howlRef.current.playing()) {
         const now = performance.now()
         if (now - lastTimeUpdateRef.current >= CURRENT_TIME_THROTTLE_MS) {
@@ -68,13 +75,34 @@ export function useHowl(onTrackEnd: () => void) {
           }
         }
       }
-      animFrameRef.current = requestAnimationFrame(update)
     }
-    animFrameRef.current = requestAnimationFrame(update)
+
+    // 根据页面可见性选择轮询间隔，并监听变化动态切换
+    const getInterval = () => (document.visibilityState === 'visible' ? CURRENT_TIME_THROTTLE_MS : 1000)
+
+    animFrameRef.current = setInterval(tick, getInterval())
+
+    const onVisibilityChange = () => {
+      // 切换前后台时重设 interval 频率
+      if (animFrameRef.current !== null) {
+        clearInterval(animFrameRef.current)
+        animFrameRef.current = setInterval(tick, getInterval())
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    // 在 stopTimeUpdate 时需要同时移除监听，通过 ref 传递清理函数
+    visibilityCleanupRef.current = () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [onTrackEnd])
 
   const stopTimeUpdate = useCallback(() => {
-    cancelAnimationFrame(animFrameRef.current)
+    if (animFrameRef.current !== null) {
+      clearInterval(animFrameRef.current)
+      animFrameRef.current = null
+    }
+    // 移除对应的 visibilitychange 监听
+    visibilityCleanupRef.current?.()
+    visibilityCleanupRef.current = null
   }, [])
 
   // Load and play a track
