@@ -233,8 +233,8 @@ export function useHowl(onTrackEnd: () => void) {
       globalAudio.volume = 0
       globalAudio.playbackRate = 1
       
-      const onLoadedData = () => {
-        globalAudio.removeEventListener('loadeddata', onLoadedData)
+      const onCanPlay = () => {
+        globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
 
         const d = globalAudio.duration
@@ -288,7 +288,7 @@ export function useHowl(onTrackEnd: () => void) {
         }
       }
 
-      globalAudio.addEventListener('loadeddata', onLoadedData)
+      globalAudio.addEventListener('canplay', onCanPlay)
       globalAudio.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },

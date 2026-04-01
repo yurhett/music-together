@@ -4,7 +4,7 @@ let unlocked = false
 
 // The global, singleton HTML5 audio element
 export const globalAudio = new Audio()
-globalAudio.crossOrigin = 'anonymous'
+globalAudio.preload = 'auto'
 
 export function isAudioUnlocked(): boolean {
   return unlocked
