@@ -55,6 +55,12 @@ export class NativeAudioAdapter {
     }
     return globalAudio.volume
   }
+  unload() {
+    globalAudio.pause()
+    globalAudio.removeAttribute('src')
+    globalAudio.load()
+    return this
+  }
 }
 
 export function useHowl(onTrackEnd: () => void) {

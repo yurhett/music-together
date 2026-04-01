@@ -14,8 +14,6 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
-import type { Howl } from 'howler'
-import { Howler } from 'howler'
 import { useEffect, useRef, type RefObject } from 'react'
 
 // ---------------------------------------------------------------------------
