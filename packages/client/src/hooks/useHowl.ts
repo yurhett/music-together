@@ -186,9 +186,21 @@ export function useHowl(onTrackEnd: () => void) {
       audioEl.onended = null
       audioEl.onerror = null
 
-      audioEl.loop = false // 关掉为前一个空白保活片段开启的 loop
-      audioEl.volume = 0
-      audioEl.src = track.streamUrl
+      let isSameSrc = false
+      if (track.streamUrl) {
+        try {
+          const targetUrl = new URL(track.streamUrl, window.location.origin).href
+          if (audioEl.src === targetUrl) {
+            isSameSrc = true
+          }
+        } catch(e) {}
+      }
+
+      if (!isSameSrc) {
+        audioEl.loop = false // 关掉为前一个空白保活片段开启的 loop
+        audioEl.volume = 0
+        audioEl.src = track.streamUrl
+      }
       
       let hasPlayedOnce = false
 
@@ -298,12 +310,34 @@ export function useHowl(onTrackEnd: () => void) {
       // DO NOT call audioEl.load() explicitly, as it drops the unlocked state on iOS Safari.
       // Changing .src implicitly begins the load algorithm.
       
-      if (autoPlay) {
-        audioEl.play().catch((e: any) => {
-          console.error('Audio sync play error:', e)
-        })
+      if (!isSameSrc) {
+        if (autoPlay) {
+          audioEl.play().catch((e: any) => {
+            console.error('Audio sync play error:', e)
+          })
+        } else {
+          usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
+        }
       } else {
-        usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
+        console.log('[loadTrack] Stream URL is identical! Skipping hard reload.')
+        if (autoPlay) {
+          audioEl.play().catch(() => {})
+        }
+        if (audioEl.readyState >= 2) { // 至少有当前帧的数据
+           if (autoPlay && howlRef.current) {
+               howlRef.current.fade(0, currentVolume, 200)
+               syncReadyRef.current = true
+           } else {
+               audioEl.volume = currentVolume
+               syncReadyRef.current = true
+           }
+        }
+        if (!audioEl.paused) {
+           usePlayerStore.getState().setIsPlaying(true)
+           const dur = audioEl.duration
+           if (Number.isFinite(dur) && dur > 0) usePlayerStore.getState().setDuration(dur)
+           startTimeUpdate()
+        }
       }
       
       usePlayerStore.getState().setCurrentTrack(track)
