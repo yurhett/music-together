@@ -9,4 +9,9 @@ export const globalHtmlAudio = typeof window !== 'undefined' ? new Audio() : nul
 if (globalHtmlAudio) {
   // Prevent iOS locking when swapping sources
   globalHtmlAudio.autoplay = false
+  // Required for iOS PWA Standalone Mode background audio:
+  // The audio element MUST be attached to the DOM
+  globalHtmlAudio.setAttribute('playsinline', 'true')
+  globalHtmlAudio.setAttribute('webkit-playsinline', 'true')
+  document.body.appendChild(globalHtmlAudio)
 }

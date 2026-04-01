@@ -41,13 +41,19 @@ export function useMediaSession() {
     navigator.mediaSession.setActionHandler('previoustrack', handlePrev)
 
     return () => {
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = null
-        navigator.mediaSession.setActionHandler('play', null)
-        navigator.mediaSession.setActionHandler('pause', null)
-        navigator.mediaSession.setActionHandler('nexttrack', null)
-        navigator.mediaSession.setActionHandler('previoustrack', null)
-      }
+      // Do not clear metadata on track changes to prevent iOS from dropping background audio lock!
+      // Action handlers can be reassigned on next render.
     }
   }, [currentTrack, socket])
+
+  // Separate effect to clear session only when no track is loaded (e.g. left room)
+  useEffect(() => {
+    if (!currentTrack && 'mediaSession' in navigator) {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.setActionHandler('nexttrack', null)
+      navigator.mediaSession.setActionHandler('previoustrack', null)
+    }
+  }, [currentTrack])
 }
