@@ -20,6 +20,7 @@ export const EVENTS = {
   PLAYER_PAUSE: 'player:pause',
   PLAYER_RESUME: 'player:resume',
   PLAYER_SEEK: 'player:seek',
+  PLAYER_RESUME: 'player:resume',
   PLAYER_NEXT: 'player:next',
   PLAYER_PREV: 'player:prev',
   PLAYER_SYNC: 'player:sync',
