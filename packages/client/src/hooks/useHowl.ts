@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { Howl } from 'howler'
+import { Howl, Howler } from 'howler'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
 import {
@@ -34,6 +34,8 @@ export function useHowl(onTrackEnd: () => void) {
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
+  // onplayerror 重试次数（跨多次 onplayerror 触发共享，防止无限重试）
+  const playRetryCountRef = useRef(0)
   // 存储 visibilitychange 清理函数，避免 memory leak
   const visibilityCleanupRef = useRef<(() => void) | null>(null)
 
@@ -133,6 +135,7 @@ export function useHowl(onTrackEnd: () => void) {
       soundIdRef.current = undefined
       trackTitleRef.current = track.title
       retryRef.current = false
+      playRetryCountRef.current = 0 // 重置 onplayerror 重试计数器
 
       if (!track.streamUrl) return
 
@@ -215,22 +218,55 @@ export function useHowl(onTrackEnd: () => void) {
           onTrackEnd()
         },
         onplayerror: function (soundId: number) {
-          // Try to recover via Howler unlock; give up after timeout
+          // iOS Safari onplayerror 根因：
+          // 原有逻辑依赖 howl.once('unlock', ...) 重试，但 unlock 事件
+          // 仅在 AudioContext suspended→running 时触发一次。
+          // 若 AudioContext 已是 running（用户之前已解锁过音频），
+          // unlock 永远不会再触发 → 3s 超时 → 每首新曲都被跳过。
           if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)
+
+          const MAX_RETRIES = 4
+
+          const attemptPlay = () => {
+            // 过期 howl 实例或已经在播放，不再重试
+            if (howlRef.current !== howl) return
+            if (howl.playing()) return
+
+            playRetryCountRef.current++
+            if (playRetryCountRef.current > MAX_RETRIES) return // 超出重试次数，等待超时兜底
+
+            howl.play(soundId)
+          }
+
+          const ctx = Howler.ctx
+          if (ctx && ctx.state === 'suspended') {
+            // AudioContext 挂起：resume 后重试（同时注册 unlock 事件作为额外保险）
+            ctx.resume().then(attemptPlay).catch(() => {
+              // resume 失败时回退到 unlock 等待
+            })
+            howl.once('unlock', () => {
+              if (howlRef.current !== howl) return
+              if (playErrorTimerRef.current) {
+                clearTimeout(playErrorTimerRef.current)
+                playErrorTimerRef.current = null
+              }
+              howl.play(soundId)
+            })
+          } else {
+            // AudioContext 已经是 running（或不存在）：
+            // unlock 事件不会再触发，改为短延迟直接重试
+            // 延迟 200ms 给 iOS 系统音频会话一点切换时间
+            setTimeout(attemptPlay, 200)
+          }
+
+          // 最终超时兜底：重试均失败时跳到下一首
           playErrorTimerRef.current = setTimeout(() => {
             playErrorTimerRef.current = null
-            console.warn('Howl unlock timeout, skipping track')
+            if (howlRef.current !== howl) return
+            console.warn('Howl play error recovery failed, skipping track')
             toast.error('播放失败，已跳到下一首')
             onTrackEnd()
           }, PLAY_ERROR_TIMEOUT_MS)
-          howl.once('unlock', () => {
-            if (howlRef.current !== howl) return // Already switched or unmounted
-            if (playErrorTimerRef.current) {
-              clearTimeout(playErrorTimerRef.current)
-              playErrorTimerRef.current = null
-            }
-            howl.play(soundId)
-          })
         },
       })
 
