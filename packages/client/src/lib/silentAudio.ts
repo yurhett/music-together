@@ -6,25 +6,3 @@
  */
 export const SILENT_AUDIO_BASE64 =
   'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//twwAACqAAAIMAAADEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQn/+3DAAAJSAAAAwwAAAMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk'
-
-let _silentBlobUrl: string | null = null
-
-export function getSilentBlobUrl(): string {
-  if (!_silentBlobUrl && typeof window !== 'undefined') {
-    try {
-      const parts = SILENT_AUDIO_BASE64.split(';base64,')
-      const contentType = parts[0].split(':')[1] || 'audio/mpeg'
-      const raw = window.atob(parts[1])
-      const rawLength = raw.length
-      const uInt8Array = new Uint8Array(rawLength)
-      for (let i = 0; i < rawLength; ++i) {
-        uInt8Array[i] = raw.charCodeAt(i)
-      }
-      const blob = new Blob([uInt8Array], { type: contentType })
-      _silentBlobUrl = URL.createObjectURL(blob)
-    } catch (e) {
-      _silentBlobUrl = SILENT_AUDIO_BASE64 // 解析失败则回退基础 base64
-    }
-  }
-  return _silentBlobUrl || SILENT_AUDIO_BASE64
-}

@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
 import { getNextTrackClient } from '@/lib/queueUtils'
+import { SILENT_AUDIO_BASE64 } from '@/lib/silentAudio'
 
 export interface AudioFacade {
   unload: () => void
@@ -255,25 +256,37 @@ export function useHowl(onTrackEnd: () => void) {
         usePlayerStore.getState().setIsPlaying(false)
         stopTimeUpdate()
         
-        // --- GAPLESS SWAP & BACKGROUND EXEMPTION FOR iOS SAFARI ---
-        // 抛弃容易引发兼容和解码出错的基站静音包。直接利用当前这首已知而且合法的流媒体，
-        // 将音量清零，并且退回 0 的位置开启单曲循环，依靠这个真实的网络资源当作底层保活锁！
-        // 当后续真正的 loadTrack 接到 WebSocket 通知时，它接替这个现成的存活锁切歌。
+        // --- GAPLESS SWAP FOR iOS SAFARI BACKGROUND ---
+        // If we know the next track and it already has a resolved streamUrl (pre-fetched by server),
+        // we synchronously update the src and play() right now. This avoids losing the background
+        // media session lock which drops if we wait for asynchronous websocket replies.
         const roomStore = useRoomStore.getState().room
+        let hasValidNextTrack = false
         if (roomStore && globalHtmlAudio) {
           const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
-          if (nextTrack) {
+          if (nextTrack && nextTrack.streamUrl) {
+            console.log('[Gapless] Synchronously swapping to next track:', nextTrack.title)
+            audioEl.loop = false
+            audioEl.src = nextTrack.streamUrl
+            audioEl.play().catch((e: any) => console.error('[Gapless] auto-play failed', e))
+            // We tell our UI we are playing the new track immediately
             usePlayerStore.getState().setCurrentTrack(nextTrack)
             usePlayerStore.getState().setIsPlaying(true)
             trackTitleRef.current = nextTrack.title
+            hasValidNextTrack = true
+            // (Note: startTimeUpdate will hook up when onplaying triggers)
           }
-          
+        }
+        
+        // --- BACKGROUND PLAYING EXEMPTION ---
+        // 若没有提前拉取到合法的 nextTrack 链接，播一段静音来保活！防止 Safari 立刻挂起，
+        // 这样 JS 和网络连接得以存活，以完成稍后到达的 websocket 状态推送和 track stream 请求。
+        if (!hasValidNextTrack && globalHtmlAudio) {
           audioEl.loop = true
-          audioEl.volume = 0
-          audioEl.currentTime = 0
+          audioEl.src = SILENT_AUDIO_BASE64
           audioEl.play().catch((e: any) => {
-            console.error('[Background] rewind auto-play failed', e)
-            toast.error(`[Background] auto-play fallback failed: ${e.message}`)
+            console.error('[Background] silent auto-play failed', e)
+            toast.error(`[Background] auto-play failed: ${e.message}`)
           })
         }
 
