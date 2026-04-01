@@ -101,10 +101,9 @@ src/
 ├── hooks/                      # 自定义 Hooks
 │   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
-│   ├── useHowl.ts              #   HTMLAudioElement 音频实例管理（单例模式，含 iOS 后台保活）
+│   ├── useHowl.ts              #   Howler.js 音频实例管理
 │   ├── useLyric.ts             #   歌词加载（TTML → 平台逐词 YRC/KRC → LRC）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报 + 周期性漂移校正）
-│   ├── useMediaSession.ts      #   Media Session API 接管（iOS 控制中心/锁屏切歌，含 keepAlive 保活）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
@@ -144,10 +143,7 @@ src/
     ├── storage.ts              #   localStorage 封装（带类型校验）
     ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_COLORS / VIP_LABELS / 状态查找函数）
     ├── format.ts               #   格式化工具（时间、文本等）
-    ├── audioUnlock.ts          #   浏览器音频自动播放解锁（含保活元素 unlock）
-    ├── singletonAudio.ts       #   全局唯一 HTMLAudioElement 单例（iOS 后台播放）
-    ├── keepAliveAudio.ts       #   iOS Safari 后台保活音频（第二音频元素，切歌间隙防挂起）
-    ├── queueUtils.ts           #   客户端队列导航工具（getNextTrackClient / getPrevTrackClient）
+    ├── audioUnlock.ts          #   浏览器音频自动播放解锁
     └── utils.ts                #   cn() + trackKey() 等通用工具
 ```
 

@@ -5,59 +5,6 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import { getNextTrackClient, getPrevTrackClient } from '@/lib/queueUtils'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
-import { startKeepAlive } from '@/lib/keepAliveAudio'
-import type { Track } from '@music-together/shared'
-
-/**
- * 同步更新 MediaSession 元数据。
- * 在后台环境下 React useEffect 可能被延迟执行，
- * 因此切歌时必须在 action handler 的同步调用栈中立即更新，
- * 否则 iOS 控制中心会短暂显示旧信息或空白。
- */
-function syncMediaSessionMetadata(track: Track) {
-  if (!('mediaSession' in navigator)) return
-  const artistList = Array.isArray(track.artist)
-    ? track.artist.join(', ')
-    : track.artist
-
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: track.title,
-    artist: artistList || 'Unknown Artist',
-    album: track.album || '',
-    artwork: track.cover
-      ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }]
-      : [],
-  })
-  navigator.mediaSession.playbackState = 'playing'
-}
-
-/**
- * 乐观切歌的统一处理逻辑。
- *
- * 情况 A: streamUrl 可用 → 立即设置 src 并播放（同步保活）
- * 情况 B: streamUrl 不可用 → 启动 keepAlive 保活音频，
- *         等待服务端 PLAYER_PLAY 响应后由 loadTrack 接管
- */
-function optimisticSwap(track: Track | null) {
-  if (!track || !globalHtmlAudio) return
-
-  if (track.streamUrl) {
-    // 情况 A：有 streamUrl → 立即切换并播放
-    globalHtmlAudio.src = track.streamUrl
-    globalHtmlAudio.play().catch(() => {})
-    usePlayerStore.getState().setCurrentTrack(track)
-    usePlayerStore.getState().setIsPlaying(true)
-    syncMediaSessionMetadata(track)
-  } else {
-    // 情况 B：无 streamUrl → 启动保活，防止 iOS 挂起
-    // 保活音频在第二个 audio 元素上播放，不影响主元素
-    startKeepAlive()
-    // 先更新 UI 状态，让控制中心显示下一首的信息
-    usePlayerStore.getState().setCurrentTrack(track)
-    usePlayerStore.getState().setIsPlaying(true)
-    syncMediaSessionMetadata(track)
-  }
-}
 
 export function useMediaSession() {
   const { currentTrack } = usePlayerStore()
@@ -70,7 +17,7 @@ export function useMediaSession() {
       ? currentTrack.artist.join(', ')
       : currentTrack.artist
 
-    // 更新系统媒体播放器的元数据
+    // Update metadata for system media player
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.title,
       artist: artistList || 'Unknown Artist',
@@ -103,20 +50,35 @@ export function useMediaSession() {
     }
 
     const handleNext = () => {
-      const roomState = useRoomStore.getState().room
-      if (roomState) {
-        const nextTrack = getNextTrackClient(roomState.queue, roomState.currentTrack, roomState.playMode)
-        // 乐观更新：同步启动音频或保活，防止 iOS 挂起
-        optimisticSwap(nextTrack)
+      // 乐观更新机制：如果本地已经取到 streamUrl 则直接塞给音频元素并播放，防 Safari 杀后台媒体锁
+      const roomStore = useRoomStore.getState().room
+      if (roomStore && globalHtmlAudio) {
+        const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
+        if (nextTrack && nextTrack.streamUrl) {
+          globalHtmlAudio.src = nextTrack.streamUrl
+          globalHtmlAudio.play().catch(() => {})
+          usePlayerStore.getState().setCurrentTrack(nextTrack)
+          usePlayerStore.getState().setIsPlaying(true)
+        } else {
+          // 如果没有则尝试刷新锁
+          globalHtmlAudio.play().catch(() => {})
+        }
       }
       socket.emit(EVENTS.PLAYER_NEXT)
     }
 
     const handlePrev = () => {
-      const roomState = useRoomStore.getState().room
-      if (roomState) {
-        const prevTrack = getPrevTrackClient(roomState.queue, roomState.currentTrack, roomState.playMode)
-        optimisticSwap(prevTrack)
+      const roomStore = useRoomStore.getState().room
+      if (roomStore && globalHtmlAudio) {
+        const prevTrack = getPrevTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
+        if (prevTrack && prevTrack.streamUrl) {
+          globalHtmlAudio.src = prevTrack.streamUrl
+          globalHtmlAudio.play().catch(() => {})
+          usePlayerStore.getState().setCurrentTrack(prevTrack)
+          usePlayerStore.getState().setIsPlaying(true)
+        } else {
+          globalHtmlAudio.play().catch(() => {})
+        }
       }
       socket.emit(EVENTS.PLAYER_PREV)
     }

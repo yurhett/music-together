@@ -12,7 +12,6 @@ import {
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
 import { getNextTrackClient } from '@/lib/queueUtils'
-import { startKeepAlive, stopKeepAlive } from '@/lib/keepAliveAudio'
 
 export interface AudioFacade {
   unload: () => void
@@ -226,8 +225,6 @@ export function useHowl(onTrackEnd: () => void) {
             audioEl.currentTime = seekTarget
           }
         }
-        // 真实音频开始播放，停止保活音频（如果正在运行）
-        stopKeepAlive()
         usePlayerStore.getState().setIsPlaying(true)
         const dur = audioEl.duration
         if (Number.isFinite(dur) && dur > 0) {
@@ -246,9 +243,9 @@ export function useHowl(onTrackEnd: () => void) {
         stopTimeUpdate()
         
         // --- GAPLESS SWAP FOR iOS SAFARI BACKGROUND ---
-        // 当歌曲播完，必须在同步调用栈中立即启动下一段音频，
-        // 否则 WebKit 会在 1-2 秒内挂起整个网页。
-        let gaplessSwapped = false
+        // If we know the next track and it already has a resolved streamUrl (pre-fetched by server),
+        // we synchronously update the src and play() right now. This avoids losing the background
+        // media session lock which drops if we wait for asynchronous websocket replies.
         const roomStore = useRoomStore.getState().room
         if (roomStore && globalHtmlAudio) {
           const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
@@ -256,18 +253,12 @@ export function useHowl(onTrackEnd: () => void) {
             console.log('[Gapless] Synchronously swapping to next track:', nextTrack.title)
             audioEl.src = nextTrack.streamUrl
             audioEl.play().catch((e: any) => console.error('[Gapless] auto-play failed', e))
+            // We tell our UI we are playing the new track immediately
             usePlayerStore.getState().setCurrentTrack(nextTrack)
             usePlayerStore.getState().setIsPlaying(true)
             trackTitleRef.current = nextTrack.title
-            gaplessSwapped = true
+            // (Note: startTimeUpdate will hook up when onplaying triggers)
           }
-        }
-
-        // 如果 gapless swap 失败（streamUrl 尚未预取），
-        // 启动保活音频防止 iOS 在等待服务端响应期间挂起页面
-        if (!gaplessSwapped) {
-          console.log('[Gapless] No streamUrl available, starting keepAlive bridge')
-          startKeepAlive()
         }
         
         onTrackEnd()
