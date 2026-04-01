@@ -7,7 +7,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
-import { useHowl } from './useHowl'
+import { getNextTrackClient, getPrevTrackClient, useHowl } from './useHowl'
 import { useLyric } from './useLyric'
 import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
@@ -42,8 +42,40 @@ export function usePlayer() {
   const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
 
-  // Connect media session for system controls (e.g. iOS lock screen)
-  useMediaSession()
+  // ─── MediaSession 乐观切歌 ────────────────────────────────────────────────
+  // 在 MediaSession handler 手势上下文内同步调用 loadTrack，
+  // 使 audioEl.play() 在手势调用栈内执行，保住 iOS 后台播放权限。
+  // loadTrack 执行后再 emit socket 事件通知服务端（其他客户端同步）。
+  const immediateNext = useCallback(() => {
+    const { room } = useRoomStore.getState()
+    if (room) {
+      const nextTrack = getNextTrackClient(room.queue, room.currentTrack, room.playMode)
+      if (nextTrack?.streamUrl) {
+        // 标记 loadingRef 防止服务端回包时重复加载（serverTimestamp=-1 不会命中精确去重）
+        loadingRef.current = { trackId: nextTrack.id, ts: Date.now(), serverTimestamp: -1 }
+        loadTrack(nextTrack, 0, true)
+        fetchLyric(nextTrack)
+      }
+    }
+    // 同时通知服务器（保证多端同步）
+    socket.emit(EVENTS.PLAYER_NEXT)
+  }, [socket, loadTrack, fetchLyric])
+
+  const immediatePrev = useCallback(() => {
+    const { room } = useRoomStore.getState()
+    if (room) {
+      const prevTrack = getPrevTrackClient(room.queue, room.currentTrack, room.playMode)
+      if (prevTrack?.streamUrl) {
+        loadingRef.current = { trackId: prevTrack.id, ts: Date.now(), serverTimestamp: -1 }
+        loadTrack(prevTrack, 0, true)
+        fetchLyric(prevTrack)
+      }
+    }
+    socket.emit(EVENTS.PLAYER_PREV)
+  }, [socket, loadTrack, fetchLyric])
+
+  // 连接 MediaSession（传入乐观手势回调）
+  useMediaSession({ onNext: immediateNext, onPrev: immediatePrev })
 
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
   usePlayerSync(howlRef, soundIdRef)

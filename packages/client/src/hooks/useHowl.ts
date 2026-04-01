@@ -11,8 +11,9 @@ import {
 } from '@/lib/constants'
 import { toast } from 'sonner'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
+import { trackSwitchMonitor } from '@/lib/trackSwitchMonitor'
 
-function getNextTrackClient(queue: Track[], currentTrack: Track | null, playMode: PlayMode): Track | null {
+export function getNextTrackClient(queue: Track[], currentTrack: Track | null, playMode: PlayMode): Track | null {
   if (queue.length === 0) return null
   const currentIndex = currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : -1
 
@@ -37,6 +38,27 @@ function getNextTrackClient(queue: Track[], currentTrack: Track | null, playMode
     default: {
       const nextIndex = currentIndex + 1
       return nextIndex < queue.length ? queue[nextIndex] : null
+    }
+  }
+}
+
+/** 获取上一曲（供 MediaSession handler 乐观加载使用） */
+export function getPrevTrackClient(queue: Track[], currentTrack: Track | null, playMode: PlayMode): Track | null {
+  if (queue.length === 0) return null
+  const currentIndex = currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : -1
+
+  switch (playMode) {
+    case 'loop-one':
+      return currentTrack && currentIndex >= 0 ? currentTrack : (queue[queue.length - 1] ?? null)
+    case 'loop-all':
+    case 'shuffle': {
+      const prevIndex = currentIndex <= 0 ? queue.length - 1 : currentIndex - 1
+      return queue[prevIndex] ?? null
+    }
+    case 'sequential':
+    default: {
+      const prevIndex = currentIndex - 1
+      return prevIndex >= 0 ? queue[prevIndex] : null
     }
   }
 }
@@ -187,10 +209,8 @@ export function useHowl(onTrackEnd: () => void) {
 
       if (globalHtmlAudio) {
         // iOS Safari Background Fix: DO NOT call .pause() here!
-        // Pausing immediately before swapping .src breaks the continuous playback
-        // chain, which makes Safari drop the background media session token.
-        // Re-assigning .src below will naturally halt the old track.
-        // globalHtmlAudio.pause() 
+        // 在 src 切换前标记为「切换中」，让 MediaSession 抑制过渡 pause 事件
+        trackSwitchMonitor.setSwitching()
         stopTimeUpdate()
       }
 
@@ -245,6 +265,8 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       audioEl.onplaying = () => {
+        // 音频正式开始播放，清除切换标志
+        trackSwitchMonitor.clearSwitching()
         if (!hasPlayedOnce && autoPlay) {
           hasPlayedOnce = true
           const elapsed = (Date.now() - loadStartTime) / 1000
@@ -267,6 +289,8 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       audioEl.onended = () => {
+        // onended 后 gapless swap 会立刻加载下一首，不需要清标志（loadTrack 会重新设置）
+        trackSwitchMonitor.clearSwitching()
         usePlayerStore.getState().setIsPlaying(false)
         stopTimeUpdate()
         
@@ -293,6 +317,7 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       audioEl.onerror = () => {
+        trackSwitchMonitor.clearSwitching()
         if (!retryRef.current && globalHtmlAudio) {
           retryRef.current = true
           console.warn('Audio load error, retrying')
