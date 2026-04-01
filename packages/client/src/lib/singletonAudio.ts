@@ -9,6 +9,6 @@ export const globalHtmlAudio = typeof window !== 'undefined' ? new Audio() : nul
 if (globalHtmlAudio) {
   // Prevent iOS locking when swapping sources
   globalHtmlAudio.autoplay = false
-  globalHtmlAudio.playsInline = true
-  globalHtmlAudio.preload = 'auto'
+  globalHtmlAudio.setAttribute('playsinline', 'true')
+  globalHtmlAudio.setAttribute('webkit-playsinline', 'true')
 }
