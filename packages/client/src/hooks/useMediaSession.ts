@@ -5,6 +5,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import { getNextTrackClient, getPrevTrackClient } from '@/lib/queueUtils'
 import { globalHtmlAudio } from '@/lib/singletonAudio'
+import { SILENT_AUDIO_BASE64 } from '@/lib/silentAudio'
 
 export function useMediaSession() {
   const { currentTrack } = usePlayerStore()
@@ -55,12 +56,15 @@ export function useMediaSession() {
       if (roomStore && globalHtmlAudio) {
         const nextTrack = getNextTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
         if (nextTrack && nextTrack.streamUrl) {
+          globalHtmlAudio.loop = false
           globalHtmlAudio.src = nextTrack.streamUrl
           globalHtmlAudio.play().catch(() => {})
           usePlayerStore.getState().setCurrentTrack(nextTrack)
           usePlayerStore.getState().setIsPlaying(true)
         } else {
-          // 如果没有则尝试刷新锁
+          // 如果没有则使用静音音频来维系后台锁，等待 Socket 事件带来的真实变更触发 loadTrack
+          globalHtmlAudio.loop = true
+          globalHtmlAudio.src = SILENT_AUDIO_BASE64
           globalHtmlAudio.play().catch(() => {})
         }
       }
@@ -72,11 +76,15 @@ export function useMediaSession() {
       if (roomStore && globalHtmlAudio) {
         const prevTrack = getPrevTrackClient(roomStore.queue, roomStore.currentTrack, roomStore.playMode)
         if (prevTrack && prevTrack.streamUrl) {
+          globalHtmlAudio.loop = false
           globalHtmlAudio.src = prevTrack.streamUrl
           globalHtmlAudio.play().catch(() => {})
           usePlayerStore.getState().setCurrentTrack(prevTrack)
           usePlayerStore.getState().setIsPlaying(true)
         } else {
+          // 同样使用静音音频来维系后台锁
+          globalHtmlAudio.loop = true
+          globalHtmlAudio.src = SILENT_AUDIO_BASE64
           globalHtmlAudio.play().catch(() => {})
         }
       }
