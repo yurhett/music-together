@@ -189,7 +189,7 @@ export function useHowl(onTrackEnd: () => void) {
               title: `⏳ 加载中...`,
               artist: currentMeta.artist,
               album: currentMeta.album,
-              artwork: currentMeta.artwork,
+              artwork: currentMeta.artwork ? [...currentMeta.artwork] : [],
             })
           }
         }).catch((e) => {
