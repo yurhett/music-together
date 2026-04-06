@@ -2,11 +2,11 @@ import { useEffect } from 'react'
 import { usePlayerStore } from '@/stores/playerStore'
 
 interface UseMediaSessionCallbacks {
-  onNext: () => void
-  onPrev: () => void
-  onPlay: () => void
-  onPause: () => void
-  onSeek: (time: number) => void
+  onNext: (() => void) | null
+  onPrev: (() => void) | null
+  onPlay: (() => void) | null
+  onPause: (() => void) | null
+  onSeek: ((time: number) => void) | null
 }
 
 /**
@@ -30,24 +30,37 @@ export function useMediaSession({
     if (!('mediaSession' in navigator)) return
 
     // 各操作直接调用外部传入的回调（已通过 useCallback 稳定引用）
-    navigator.mediaSession.setActionHandler('nexttrack', onNext)
-    navigator.mediaSession.setActionHandler('previoustrack', onPrev)
-    navigator.mediaSession.setActionHandler('play', onPlay)
-    navigator.mediaSession.setActionHandler('pause', onPause)
-    navigator.mediaSession.setActionHandler('seekto', (details: MediaSessionActionDetails) => {
-      if (details.seekTime != null) {
-        onSeek(details.seekTime)
-      }
-    })
+    navigator.mediaSession.setActionHandler('nexttrack', onNext || null)
+    navigator.mediaSession.setActionHandler('previoustrack', onPrev || null)
+    navigator.mediaSession.setActionHandler('play', onPlay || null)
+    navigator.mediaSession.setActionHandler('pause', onPause || null)
+    navigator.mediaSession.setActionHandler(
+      'seekto',
+      onSeek
+        ? (details: MediaSessionActionDetails) => {
+            if (details.seekTime != null) onSeek(details.seekTime)
+          }
+        : null
+    )
     // seekbackward / seekforward 用于支持带快退快进键的耳机
-    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-      const current = usePlayerStore.getState().currentTime
-      onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
-    })
-    navigator.mediaSession.setActionHandler('seekforward', (details) => {
-      const { currentTime, duration } = usePlayerStore.getState()
-      onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
-    })
+    navigator.mediaSession.setActionHandler(
+      'seekbackward',
+      onSeek
+        ? (details) => {
+            const current = usePlayerStore.getState().currentTime
+            onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
+          }
+        : null
+    )
+    navigator.mediaSession.setActionHandler(
+      'seekforward',
+      onSeek
+        ? (details) => {
+            const { currentTime, duration } = usePlayerStore.getState()
+            onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
+          }
+        : null
+    )
 
     return () => {
       // 组件卸载时清理处理器，避免指向旧回调
