@@ -93,13 +93,29 @@ export function usePlayer() {
         // the scheduling delay account for buffering.
         // When NTP is not yet calibrated, execute immediately (delay=0) to
         // avoid wildly inaccurate scheduling from uncorrected local clocks.
-        const delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
+        let delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
+
+        // 核心修复2: Chrome 背景标签页休眠豁免
+        // 如果当前页面处于黑屏后台，绝对不能走 setTimeout 延迟执行，否则会被延后几秒甚至暂停
+        // 将延迟置 0 让主线程趁着音频刚结束的 "免死金牌宽限期" 直接把 play 怼出去保活
+        if (document.hidden) {
+          delay = 0
+        }
+
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
-        playTimerRef.current = setTimeout(() => {
+        
+        // 顺带提速：如果算出来的补偿只有非常几毫秒，不再挂 setTimeout，直接同步拉起减少异步挂起率
+        if (delay <= 10) {
           playTimerRef.current = null
           loadTrack(data.track, 0, data.playState.isPlaying)
           fetchLyric(data.track)
-        }, delay)
+        } else {
+          playTimerRef.current = setTimeout(() => {
+            playTimerRef.current = null
+            loadTrack(data.track, 0, data.playState.isPlaying)
+            fetchLyric(data.track)
+          }, delay)
+        }
       } else {
         // Mid-song join or currentTime > 0: load immediately and seek to
         // the expected position at the scheduled execution time.
