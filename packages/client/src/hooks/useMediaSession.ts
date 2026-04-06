@@ -2,11 +2,11 @@ import { useEffect } from 'react'
 import { usePlayerStore } from '@/stores/playerStore'
 
 interface UseMediaSessionCallbacks {
-  onNext: (() => void) | null
-  onPrev: (() => void) | null
-  onPlay: (() => void) | null
-  onPause: (() => void) | null
-  onSeek: ((time: number) => void) | null
+  onNext: () => void
+  onPrev: () => void
+  onPlay: () => void
+  onPause: () => void
+  onSeek: (time: number) => void
 }
 
 /**
@@ -30,48 +30,53 @@ export function useMediaSession({
     if (!('mediaSession' in navigator)) return
 
     // 各操作直接调用外部传入的回调（已通过 useCallback 稳定引用）
-    navigator.mediaSession.setActionHandler('nexttrack', onNext || null)
-    navigator.mediaSession.setActionHandler('previoustrack', onPrev || null)
-    navigator.mediaSession.setActionHandler('play', onPlay || null)
-    navigator.mediaSession.setActionHandler('pause', onPause || null)
-    navigator.mediaSession.setActionHandler(
-      'seekto',
-      onSeek
-        ? (details: MediaSessionActionDetails) => {
-            if (details.seekTime != null) onSeek(details.seekTime)
+    const handlers: [MediaSessionAction, MediaSessionActionHandler | null][] = [
+      ['nexttrack', () => onNext()],
+      ['previoustrack', () => onPrev()],
+      ['play', () => onPlay()],
+      ['pause', () => onPause()],
+      [
+        'seekto',
+        (details: MediaSessionActionDetails) => {
+          if (details.seekTime != null) {
+            onSeek(details.seekTime)
           }
-        : null
-    )
-    // seekbackward / seekforward 用于支持带快退快进键的耳机
-    navigator.mediaSession.setActionHandler(
-      'seekbackward',
-      onSeek
-        ? (details) => {
-            const current = usePlayerStore.getState().currentTime
-            onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
-          }
-        : null
-    )
-    navigator.mediaSession.setActionHandler(
-      'seekforward',
-      onSeek
-        ? (details) => {
-            const { currentTime, duration } = usePlayerStore.getState()
-            onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
-          }
-        : null
-    )
+        },
+      ],
+      [
+        'seekbackward',
+        (details: MediaSessionActionDetails) => {
+          const current = usePlayerStore.getState().currentTime
+          onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
+        },
+      ],
+      [
+        'seekforward',
+        (details: MediaSessionActionDetails) => {
+          const { currentTime, duration } = usePlayerStore.getState()
+          onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
+        },
+      ],
+    ]
+
+    for (const [action, handler] of handlers) {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler)
+      } catch (error) {
+        console.warn(`[Media Session] 暂不支持 ${action} 操作`)
+      }
+    }
 
     return () => {
       // 组件卸载时清理处理器，避免指向旧回调
       if (!('mediaSession' in navigator)) return
-      navigator.mediaSession.setActionHandler('nexttrack', null)
-      navigator.mediaSession.setActionHandler('previoustrack', null)
-      navigator.mediaSession.setActionHandler('play', null)
-      navigator.mediaSession.setActionHandler('pause', null)
-      navigator.mediaSession.setActionHandler('seekto', null)
-      navigator.mediaSession.setActionHandler('seekbackward', null)
-      navigator.mediaSession.setActionHandler('seekforward', null)
+      for (const [action] of handlers) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null)
+        } catch {
+          // ignore
+        }
+      }
     }
     // 回调引用稳定（useCallback 保障），effect 只在 mount/unmount 时执行
     // eslint-disable-next-line react-hooks/exhaustive-deps

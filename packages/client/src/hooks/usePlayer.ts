@@ -6,8 +6,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
-import { AbilityContext } from '@/providers/AbilityProvider'
-import { useContext, useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
 import { useMediaSession } from './useMediaSession'
@@ -25,8 +24,9 @@ import { usePlayerSync } from './usePlayerSync'
  */
 export function usePlayer() {
   const { socket } = useSocketContext()
-  const ability = useContext(AbilityContext)
   const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
+
+  const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
   // Auto-next on song end: only the current conductor (hostId) emits PLAYER_NEXT.
   // The conductor is auto-elected by the server (owner > admin > member).
@@ -198,42 +198,31 @@ export function usePlayer() {
   // to ALL clients (including us) via scheduled execution.
   // -----------------------------------------------------------------------
   const play = useCallback(() => {
-    if (!ability.can('play', 'Player')) return
     socket.emit(EVENTS.PLAYER_PLAY)
-  }, [socket, ability])
+  }, [socket])
 
   const pause = useCallback(() => {
-    if (!ability.can('pause', 'Player')) return
     socket.emit(EVENTS.PLAYER_PAUSE)
-  }, [socket, ability])
+  }, [socket])
 
   const seek = useCallback(
     (time: number) => {
-      if (!ability.can('seek', 'Player')) return
       // Optimistic local update for the progress bar UI
       usePlayerStore.getState().setCurrentTime(time)
       socket.emit(EVENTS.PLAYER_SEEK, { currentTime: time })
     },
-    [socket, ability],
+    [socket],
   )
 
-  const next = useCallback(() => {
-    if (!ability.can('next', 'Player')) return
-    socket.emit(EVENTS.PLAYER_NEXT)
-  }, [socket, ability])
-
-  const prev = useCallback(() => {
-    if (!ability.can('prev', 'Player')) return
-    socket.emit(EVENTS.PLAYER_PREV)
-  }, [socket, ability])
+  const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
 
   // 接入 Media Session API，为 iOS 锁屏控制中心提供切歌、元数据、进度条
   useMediaSession({
-    onNext: ability.can('next', 'Player') ? next : null,
-    onPrev: ability.can('prev', 'Player') ? prev : null,
-    onPlay: ability.can('play', 'Player') ? play : null,
-    onPause: ability.can('pause', 'Player') ? pause : null,
-    onSeek: ability.can('seek', 'Player') ? seek : null,
+    onNext: next,
+    onPrev: prev,
+    onPlay: play,
+    onPause: pause,
+    onSeek: seek,
   })
 
   return { play, pause, seek, next, prev }
