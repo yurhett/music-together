@@ -182,7 +182,10 @@ export function useHowl(onTrackEnd: () => void) {
         // 🚨 绝对不能设置为 0 或 muted, 否则 Chrome 等系统为了省电会立即停止“仅视频且无声”的后台媒体播放
         globalAudio.volume = 1
         globalAudio.play().then(() => {
-          console.log('[Audio Debug] Silent WAV is playing successfully (Tab speaker icon should remain on).')
+          // 注意：如果在 iOS 上后台彻底暂停，JS 仍可能会被系统挂起。我们将以此来做对照测试。
+          globalAudio.pause()
+          
+          console.log('[Audio Debug] Silent WAV is paused for testing (UI should show paused).')
           if ('mediaSession' in navigator && navigator.mediaSession.metadata) {
             const currentMeta = navigator.mediaSession.metadata
             navigator.mediaSession.metadata = new MediaMetadata({
