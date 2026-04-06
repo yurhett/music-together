@@ -93,28 +93,13 @@ export function usePlayer() {
         // the scheduling delay account for buffering.
         // When NTP is not yet calibrated, execute immediately (delay=0) to
         // avoid wildly inaccurate scheduling from uncorrected local clocks.
-        let delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
-        
-        // Critical Fix: Chrome/Android background tab setTimeout throttling.
-        // If the page is hidden, run immediately to keep the audio session alive
-        // and prevent the browser from throttling the timeout loop.
-        if (document.hidden || delay <= 10) {
-          delay = 0
-        }
-
+        const delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
-        
-        if (delay === 0) {
+        playTimerRef.current = setTimeout(() => {
           playTimerRef.current = null
           loadTrack(data.track, 0, data.playState.isPlaying)
           fetchLyric(data.track)
-        } else {
-          playTimerRef.current = setTimeout(() => {
-            playTimerRef.current = null
-            loadTrack(data.track, 0, data.playState.isPlaying)
-            fetchLyric(data.track)
-          }, delay)
-        }
+        }, delay)
       } else {
         // Mid-song join or currentTime > 0: load immediately and seek to
         // the expected position at the scheduled execution time.

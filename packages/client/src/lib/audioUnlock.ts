@@ -6,11 +6,7 @@ let unlocked = false
 export const globalAudio = new Audio()
 globalAudio.preload = 'auto'
 
-// Background keep-alive silent audio mechanism
-export const keepAliveAudio = new Audio()
-keepAliveAudio.loop = true
-keepAliveAudio.volume = 0
-keepAliveAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+export const SILENT_WAV_BASE64 = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
 
 export function isAudioUnlocked(): boolean {
   return unlocked
@@ -30,14 +26,11 @@ export async function unlockAudio(): Promise<void> {
     await ctx.resume()
   }
 
-  // 2. Play a silent WAV to force-activate the global HTML5 audio elements
+  // 2. Play a silent WAV to force-activate the global HTML5 audio element
+  globalAudio.src = SILENT_WAV_BASE64
+  globalAudio.volume = 0
+  
   try {
-    // Start background keep-alive loop
-    await keepAliveAudio.play()
-    
-    // Unlock the main audio context
-    globalAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
-    globalAudio.volume = 0
     await globalAudio.play()
   } catch (e) {
     console.warn('Audio unlock failed:', e)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
-import { globalAudio } from '@/lib/audioUnlock'
+import { globalAudio, SILENT_WAV_BASE64 } from '@/lib/audioUnlock'
 import {
   CURRENT_TIME_THROTTLE_MS,
   HOWL_UNMUTE_DELAY_SEEK_MS,
@@ -173,6 +173,14 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleEnded = () => {
+      // 以无声 WAV 循环播放，避免系统立马挂起 JS 导致无法拉取下一首歌
+      if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
+        globalAudio.src = SILENT_WAV_BASE64
+        globalAudio.loop = true
+        globalAudio.volume = 0
+        globalAudio.play().catch(() => {})
+      }
+
       usePlayerStore.getState().setIsPlaying(false)
       stopTimeUpdate()
       onTrackEnd()
@@ -230,30 +238,51 @@ export function useHowl(onTrackEnd: () => void) {
       const currentVolume = usePlayerStore.getState().volume
 
       globalAudio.src = track.streamUrl
+      globalAudio.loop = false
       globalAudio.volume = 0
       globalAudio.playbackRate = 1
-      
-      if (autoPlay) {
-        if (seekTo && seekTo > 0) {
-          usePlayerStore.getState().setCurrentTime(seekTo)
-          globalAudio.currentTime = seekTo
-        }
-        
-        // Fix: Immediately call play() to bypass Safari's lazy loading restriction
-        // and allow background streaming without `canplay` locking the thread
-        globalAudio.play().then(() => {
-          if (globalAudio.src !== track.streamUrl) return
-          
-          const d = globalAudio.duration
-          if (Number.isFinite(d) && d > 0) {
-            usePlayerStore.getState().setDuration(d)
-          }
 
-          const elapsed = (Date.now() - loadStartTime) / 1000
-          const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
-          if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
-            globalAudio.currentTime = seekTarget
+      if (autoPlay) {
+        // 不等待缓冲，立刻播放，防止系统认为没有连续音频交接便立刻挂起 JS
+        globalAudio.play().catch(() => {})
+      }
+      
+      const onCanPlay = () => {
+        globalAudio.removeEventListener('canplay', onCanPlay)
+        if (globalAudio.src !== track.streamUrl) return
+
+        const d = globalAudio.duration
+        if (Number.isFinite(d) && d > 0) {
+          usePlayerStore.getState().setDuration(d)
+        }
+
+        if (autoPlay) {
+          if (seekTo && seekTo > 0) {
+            usePlayerStore.getState().setCurrentTime(seekTo)
+            globalAudio.currentTime = seekTo
           }
+          
+          globalAudio.play().then(() => {
+            if (globalAudio.src !== track.streamUrl) return
+            
+            const elapsed = (Date.now() - loadStartTime) / 1000
+            const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
+            if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+              globalAudio.currentTime = seekTarget
+            }
+          }).catch(e => {
+            if (document.hidden) return
+            playErrorTimerRef.current = setTimeout(() => {
+              if (document.hidden) {
+                playErrorTimerRef.current = null
+                return
+              }
+              playErrorTimerRef.current = null
+              console.warn('Native Audio play error/timeout, skipping track', e)
+              toast.error('播放失败，已跳到下一首')
+              onTrackEnd()
+            }, PLAY_ERROR_TIMEOUT_MS)
+          })
 
           unmuteTimerRef.current = setTimeout(
             () => {
@@ -265,37 +294,16 @@ export function useHowl(onTrackEnd: () => void) {
             },
             seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
           )
-        }).catch(e => {
-          if (document.hidden) return // Let error timer check
-          playErrorTimerRef.current = setTimeout(() => {
-            if (document.hidden) {
-              playErrorTimerRef.current = null
-              return
-            }
-            playErrorTimerRef.current = null
-            console.warn('Native Audio play error/timeout, skipping track', e)
-            toast.error('播放失败，已跳到下一首')
-            onTrackEnd()
-          }, PLAY_ERROR_TIMEOUT_MS)
-        })
-      } else {
-        const onCanPlay = () => {
-          globalAudio.removeEventListener('canplay', onCanPlay)
-          if (globalAudio.src !== track.streamUrl) return
-
-          const d = globalAudio.duration
-          if (Number.isFinite(d) && d > 0) {
-            usePlayerStore.getState().setDuration(d)
-          }
+        } else {
           if (seekTo && seekTo > 0) globalAudio.currentTime = seekTo
           globalAudio.volume = currentVolume
           usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
           syncReadyRef.current = true
         }
-        globalAudio.addEventListener('canplay', onCanPlay)
-        globalAudio.load()
       }
 
+      globalAudio.addEventListener('canplay', onCanPlay)
+      globalAudio.load()
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, stopTimeUpdate],
