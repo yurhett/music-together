@@ -61,6 +61,7 @@ export function usePlayer() {
 
   useEffect(() => {
     const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
+      console.log('[Audio Debug] 📡 socket onPlayerPlay received. Track:', data.track.title)
       // Deduplicate: ignore if the same track with the same serverTimestamp
       // was requested within the dedup window.  Comparing serverTimestamp
       // ensures that a legitimate replay of the same track (e.g. loop mode)

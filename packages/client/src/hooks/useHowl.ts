@@ -173,12 +173,28 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleEnded = () => {
+      console.log('[Audio Debug] ✨ native "ended" event triggered!')
       // 以无声 WAV 循环播放，避免系统立马挂起 JS 导致无法拉取下一首歌
       if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
+        console.log('[Audio Debug] Track ended. Starting silent WAV keep-alive...')
         globalAudio.src = SILENT_WAV_BASE64
         globalAudio.loop = true
-        globalAudio.volume = 0
-        globalAudio.play().catch(() => {})
+        // 🚨 绝对不能设置为 0 或 muted, 否则 Chrome 等系统为了省电会立即停止“仅视频且无声”的后台媒体播放
+        globalAudio.volume = 1
+        globalAudio.play().then(() => {
+          console.log('[Audio Debug] Silent WAV is playing successfully (Tab speaker icon should remain on).')
+          if ('mediaSession' in navigator && navigator.mediaSession.metadata) {
+            const currentMeta = navigator.mediaSession.metadata
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: `⏳ 加载中...`,
+              artist: currentMeta.artist,
+              album: currentMeta.album,
+              artwork: currentMeta.artwork,
+            })
+          }
+        }).catch((e) => {
+          console.warn('[Audio Debug] Silent WAV play failed:', e)
+        })
       }
 
       usePlayerStore.getState().setIsPlaying(false)
@@ -187,6 +203,7 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const handleError = () => {
+      console.error('[Audio Debug] handleError called:', globalAudio.error)
       if (!retryRef.current && globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         retryRef.current = true
         console.warn('Audio load error, retrying:', globalAudio.error)
@@ -217,6 +234,8 @@ export function useHowl(onTrackEnd: () => void) {
 
   const loadTrack = useCallback(
     (track: Track, seekTo?: number, autoPlay = true) => {
+      console.log(`[Audio Debug] loadTrack called. new track: ${track.title}, autoPlay: ${autoPlay}, seekTo: ${seekTo}`)
+      
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
         unmuteTimerRef.current = null
@@ -239,14 +258,10 @@ export function useHowl(onTrackEnd: () => void) {
 
       globalAudio.src = track.streamUrl
       globalAudio.loop = false
-      globalAudio.volume = 0
+      // 🚨 当处于后台(hidden)时不要静音，否则直接被系统按照省点策略暂停网络请求。处于前台时给一个极小值避免杂音突爆。
+      globalAudio.volume = document.hidden ? Math.max(0.01, currentVolume) : 0.001
       globalAudio.playbackRate = 1
 
-      if (autoPlay) {
-        // 不等待缓冲，立刻播放，防止系统认为没有连续音频交接便立刻挂起 JS
-        globalAudio.play().catch(() => {})
-      }
-      
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
@@ -288,7 +303,8 @@ export function useHowl(onTrackEnd: () => void) {
             () => {
               if (globalAudio.src === track.streamUrl) {
                 const latestVolume = usePlayerStore.getState().volume
-                fadeAudio(0, latestVolume, 200)
+                // 从当前音量平滑过渡，如果处于后台则直接沿用。
+                fadeAudio(document.hidden ? latestVolume : 0.001, latestVolume, 200)
                 syncReadyRef.current = true
               }
             },
@@ -303,7 +319,19 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       globalAudio.addEventListener('canplay', onCanPlay)
+      // 首先同步执行 load()
       globalAudio.load()
+      
+      // 在 load() 明确重置会话之后立刻 play(). 这向系统强宣我们占用媒体缓冲了
+      if (autoPlay) {
+        console.log('[Audio Debug] loadTrack autoPlay started for new URL.', track.streamUrl.substring(0, 30) + '...')
+        globalAudio.play().then(() => {
+          console.log('[Audio Debug] New track .play() success pending buffering.')
+        }).catch((e) => {
+          console.error('[Audio Debug] New track .play() failed:', e)
+        })
+      }
+      
       usePlayerStore.getState().setCurrentTrack(track)
     },
     [onTrackEnd, stopTimeUpdate],
