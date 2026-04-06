@@ -94,18 +94,17 @@ export function usePlayer() {
         // When NTP is not yet calibrated, execute immediately (delay=0) to
         // avoid wildly inaccurate scheduling from uncorrected local clocks.
         let delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
-
-        // 核心修复2: Chrome 背景标签页休眠豁免
-        // 如果当前页面处于黑屏后台，绝对不能走 setTimeout 延迟执行，否则会被延后几秒甚至暂停
-        // 将延迟置 0 让主线程趁着音频刚结束的 "免死金牌宽限期" 直接把 play 怼出去保活
-        if (document.hidden) {
+        
+        // Critical Fix: Chrome/Android background tab setTimeout throttling.
+        // If the page is hidden, run immediately to keep the audio session alive
+        // and prevent the browser from throttling the timeout loop.
+        if (document.hidden || delay <= 10) {
           delay = 0
         }
 
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
         
-        // 顺带提速：如果算出来的补偿只有非常几毫秒，不再挂 setTimeout，直接同步拉起减少异步挂起率
-        if (delay <= 10) {
+        if (delay === 0) {
           playTimerRef.current = null
           loadTrack(data.track, 0, data.playState.isPlaying)
           fetchLyric(data.track)

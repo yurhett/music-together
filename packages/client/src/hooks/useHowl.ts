@@ -239,8 +239,8 @@ export function useHowl(onTrackEnd: () => void) {
           globalAudio.currentTime = seekTo
         }
         
-        // 核心修复1: 立刻调用 play()。这能强迫 Safari/iPad 立刻开始网络缓冲(越过 Lazy 限制),
-        // 同时能够让失去音频正在播放状态的背景 Chrome 迅速夺回正在播放音频的特权，不被节流。
+        // Fix: Immediately call play() to bypass Safari's lazy loading restriction
+        // and allow background streaming without `canplay` locking the thread
         globalAudio.play().then(() => {
           if (globalAudio.src !== track.streamUrl) return
           
@@ -266,7 +266,7 @@ export function useHowl(onTrackEnd: () => void) {
             seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
           )
         }).catch(e => {
-          if (document.hidden) return
+          if (document.hidden) return // Let error timer check
           playErrorTimerRef.current = setTimeout(() => {
             if (document.hidden) {
               playErrorTimerRef.current = null
