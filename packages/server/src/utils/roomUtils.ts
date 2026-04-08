@@ -15,7 +15,6 @@ export function toPublicRoomState(data: RoomData): RoomState {
     currentTrack: data.currentTrack,
     playState: data.playState,
     playMode: data.playMode,
-    radioMode: data.radioMode,
   }
 }
 

@@ -43,7 +43,7 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
   const { socket, isConnected } = useSocketContext()
-  const { leaveRoom, updateSettings, setUserRole, dissolveRoom } = useRoom()
+  const { leaveRoom, updateSettings, setUserRole } = useRoom()
   const { play, pause, seek, next, prev } = usePlayer()
   const { addTrack, removeTrack, reorderTracks, clearQueue } = useQueue()
 
@@ -312,7 +312,6 @@ export default function RoomPage() {
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenMembers={handleOpenMembers}
             onLeaveRoom={handleLeaveRoom}
-            onDissolveRoom={dissolveRoom}
           />
 
           <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3 lg:p-4">

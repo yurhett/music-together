@@ -38,7 +38,6 @@ export function useRoom() {
       name?: string
       password?: string | null
       audioQuality?: import('@music-together/shared').AudioQuality
-      radioMode?: boolean
     }) => {
       socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },
@@ -52,9 +51,5 @@ export function useRoom() {
     [socket],
   )
 
-  const dissolveRoom = useCallback(() => {
-    socket.emit(EVENTS.ROOM_DISSOLVE)
-  }, [socket])
-
-  return { leaveRoom, updateSettings, setUserRole, dissolveRoom }
+  return { leaveRoom, updateSettings, setUserRole }
 }

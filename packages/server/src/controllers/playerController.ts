@@ -105,8 +105,6 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       if (!room) return
       // Only accept reports from the conductor
       if (room.hostId !== mapping.userId) return
-      // 电台模式下：忽略客户端 conductor 的同步报告，服务端自己负责走带
-      if (room.radioMode) return
 
       // Reject stale reports from a sleeping conductor: if the reported position is
       // far behind the server's estimate, the conductor likely just woke from sleep

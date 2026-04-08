@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Lock, LockOpen, Music, Users, Radio } from 'lucide-react'
+import { Lock, LockOpen, Music, Users } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
 import { cn } from '@/lib/utils'
@@ -79,12 +79,6 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
           <Users className="h-3 w-3" />
           {room.userCount}
         </span>
-        {room.radioMode && (
-          <span className="flex items-center gap-1 text-xs font-medium text-emerald-500/80">
-            <Radio className="h-3 w-3" />
-            电台
-          </span>
-        )}
         <span className="text-xs text-muted-foreground/50">{room.id}</span>
       </div>
     </motion.button>

@@ -11,7 +11,6 @@ import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
 import type { RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
-import { getOrCreateRadioConductor, destroyRadioConductor, getRadioConductor } from './radioConductor.js'
 
 // ---------------------------------------------------------------------------
 // Per-room mutex for playTrackInRoom (prevents concurrent execution)
@@ -168,14 +167,6 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
     serverTimestamp: scheduleTime,
   }
 
-  // 电台模式：启动/重置服务端走带器
-  if (room.radioMode) {
-    const conductor = getOrCreateRadioConductor(roomId, io, (rid) =>
-      playNextTrackInRoom(io, rid, roomRepo.get(rid)?.playMode ?? 'loop-all', { skipDebounce: true }),
-    )
-    conductor.start(0)
-  }
-
   io.to(roomId).emit(EVENTS.PLAYER_PLAY, {
     track: resolved,
     playState: scheduled(room.playState, roomId, scheduleTime),
@@ -194,12 +185,6 @@ export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: 
 
   const scheduleTime = getScheduleTime(roomId)
   room.playState = { ...room.playState, isPlaying: true, serverTimestamp: scheduleTime }
-
-  // 电台模式：恢复走带器
-  if (room.radioMode) {
-    getRadioConductor(roomId)?.resume()
-  }
-
   // All clients (including initiator) must execute at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: scheduled(room.playState, roomId, scheduleTime) })
 }
@@ -211,12 +196,6 @@ export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: T
   // Snapshot estimated position before pausing so resume starts from the correct point
   const snapshotTime = estimateCurrentTime(roomId)
   room.playState = { isPlaying: false, currentTime: snapshotTime, serverTimestamp: Date.now() }
-
-  // 电台模式：暂停走带器
-  if (room.radioMode) {
-    getRadioConductor(roomId)?.pause()
-  }
-
   // All clients must pause at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState: scheduled(room.playState, roomId) })
 }
@@ -232,12 +211,6 @@ export function seekTrack(io: TypedServer, roomId: string, currentTime: number, 
     currentTime,
     serverTimestamp: room.playState.isPlaying ? scheduleTime : Date.now(),
   }
-
-  // 电台模式：通知走带器 seek（重置 isHandlingEnd 标记）
-  if (room.radioMode) {
-    getRadioConductor(roomId)?.seek(currentTime)
-  }
-
   // All clients must seek at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_SEEK, { playState: scheduled(room.playState, roomId, scheduleTime) })
 }
@@ -267,15 +240,11 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
  * Used when no next track is available (queue empty, track removed, queue cleared).
  */
 export function stopPlayback(io: TypedServer, roomId: string): void {
-  const room = roomRepo.get(roomId)
-  // 电台模式：停止走带器（等待新曲目加入后重新 start）
-  if (room?.radioMode) {
-    getRadioConductor(roomId)?.stop()
-  }
   setCurrentTrack(roomId, null)
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, {
     playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
   })
+  const room = roomRepo.get(roomId)
   if (room) {
     io.to(roomId).emit(EVENTS.ROOM_STATE, toPublicRoomState(room))
   }
@@ -382,13 +351,11 @@ export async function syncPlaybackToSocket(
   const isAloneInRoom = room.users.length === 1
 
   if (room.currentTrack?.streamUrl) {
-    // 电台模式：服务端已是 conductor，直接按当前 playState 同步，不自动恢复
-    // 普通模式：仅一人时且暂停 → 自动恢复
-    const shouldAutoResume = !room.radioMode && isAloneInRoom && !room.playState.isPlaying
-    if (shouldAutoResume) {
+    // Alone in room + track was paused → auto-resume (user rejoining)
+    const shouldAutoPlay = isAloneInRoom || room.playState.isPlaying
+    if (isAloneInRoom && !room.playState.isPlaying) {
       room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
     }
-    const shouldAutoPlay = room.radioMode ? room.playState.isPlaying : (isAloneInRoom || room.playState.isPlaying)
     socket.emit(EVENTS.PLAYER_PLAY, {
       track: room.currentTrack,
       playState: {
@@ -398,9 +365,8 @@ export async function syncPlaybackToSocket(
         serverTimeToExecute: Date.now(),
       },
     })
-  } else if (!room.radioMode && isAloneInRoom && room.queue.length > 0) {
-    // 普通模式：无当前歌曲但队列有内容 → 自动开始播放
-    // 电台模式：等 autoPlayIfEmpty 来处理（已有的 QUEUE_ADD 路径）
+  } else if (isAloneInRoom && room.queue.length > 0) {
+    // No current track but queue has items → start playing from queue
     const firstTrack = room.queue[0]
     await playTrackInRoom(io, roomId, firstTrack)
   }
@@ -427,7 +393,6 @@ export function cleanupRoom(roomId: string): void {
   lastNextTimestamp.delete(roomId)
   conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
-  destroyRadioConductor(roomId)
 }
 
 /**

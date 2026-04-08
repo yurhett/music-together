@@ -10,7 +10,6 @@ const envSchema = z.object({
   IDENTITY_TTL_DAYS: z.coerce.number().int().positive().default(30),
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
-  MAX_RADIO_ROOMS: z.coerce.number().int().nonnegative().default(10),
 })
 
 const env = envSchema.parse(process.env)
@@ -28,7 +27,6 @@ export const config = {
     : ([env.CLIENT_URL, ...env.CORS_ORIGINS.split(',').filter(Boolean)] as string[]),
   room: {
     gracePeriodMs: TIMING.ROOM_GRACE_PERIOD_MS,
-    maxRadioRooms: env.MAX_RADIO_ROOMS,
   },
   player: {
     nextDebounceMs: TIMING.PLAYER_NEXT_DEBOUNCE_MS,

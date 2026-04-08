@@ -27,12 +27,7 @@ function getQualityLabel(quality: AudioQuality): string {
 }
 
 interface RoomSettingsSectionProps {
-  onUpdateSettings: (settings: {
-    name?: string
-    password?: string | null
-    audioQuality?: AudioQuality
-    radioMode?: boolean
-  }) => void
+  onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
@@ -261,23 +256,6 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
           <SettingRow label="房间密码" description="开启后需输入密码才能进入">
             <Switch checked={passwordEnabled} onCheckedChange={handlePasswordToggle} />
-          </SettingRow>
-
-          <SettingRow
-            label="电台模式"
-            description={
-              room?.radioMode
-                ? '已开启：房间将永久保留（直至解散），无人时也会自动播放。'
-                : '开启后：房间不会因无人而解散，服务端将接管自动切歌。'
-            }
-          >
-            <Switch
-              checked={room?.radioMode ?? false}
-              onCheckedChange={(checked) => {
-                onUpdateSettings({ radioMode: checked })
-                toast.success(checked ? '已开启电台模式' : '已关闭电台模式')
-              }}
-            />
           </SettingRow>
 
           {passwordEnabled && (

@@ -16,8 +16,6 @@ export interface RoomData {
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode
-  /** 电台模式：服务端担任 conductor，房间空置时不删除、自动走带 */
-  radioMode: boolean
 }
 
 export interface SocketMapping {

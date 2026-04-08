@@ -4,15 +4,12 @@ import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { chatRepo } from '../repositories/chatRepository.js'
-import { config } from '../config.js'
 import { scheduleDeletion, cancelDeletionTimer } from './roomLifecycleService.js'
 import { consumeRejoinTicket } from './rejoinTicketService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { updateVoteThreshold } from './voteService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
-import { getOrCreateRadioConductor, destroyRadioConductor, getRadioConductor } from './radioConductor.js'
-import { playNextTrackInRoom, cleanupRoom as cleanupPlayerRoom } from './playerService.js'
 
 // Re-export from their new homes so existing `roomService.xxx()` callers
 // in controllers don't need import changes.
@@ -58,16 +55,7 @@ export function createRoom(
   roomName?: string,
   password?: string | null,
   persistentUserId?: string,
-  radioMode = false,
-): { room: RoomData; user: User } | { error: string; code: string } {
-  // 电台模式数量上限检查
-  if (radioMode) {
-    const radioCount = Array.from(roomRepo.getAll().values()).filter((r) => r.radioMode).length
-    if (radioCount >= config.room.maxRadioRooms) {
-      return { error: `电台房间数量已达到上限 (${config.room.maxRadioRooms})，请稍后再试`, code: 'RADIO_LIMIT_REACHED' }
-    }
-  }
-
+): { room: RoomData; user: User } {
   const roomId = nanoid(6).toUpperCase()
   const userId = persistentUserId || socketId
 
@@ -90,14 +78,13 @@ export function createRoom(
       serverTimestamp: Date.now(),
     },
     playMode: 'loop-all',
-    radioMode,
   }
 
   roomRepo.set(roomId, room)
   chatRepo.createRoom(roomId)
   roomRepo.setSocketMapping(socketId, roomId, userId)
 
-  logger.info(`Room created: ${roomId} by ${nickname}${radioMode ? ' [RADIO]' : ''}`, { roomId })
+  logger.info(`Room created: ${roomId} by ${nickname}`, { roomId })
   return { room, user }
 }
 
@@ -178,14 +165,9 @@ export function leaveRoom(
   room.users = room.users.filter((u) => u.id !== userId)
   roomRepo.deleteSocketMapping(socketId)
 
-  // 电台模式：房间空置时不删除，走带器继续运行
-  // 普通模式：安排宽限期删除
+  // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
-    if (!room.radioMode) {
-      scheduleDeletion(roomId, io)
-    } else {
-      logger.info(`Radio room ${roomId} is empty — keeping alive`, { roomId })
-    }
+    scheduleDeletion(roomId, io)
     return { roomId, user, room, hostChanged: false, voteUpdated: false }
   }
 
@@ -212,9 +194,8 @@ export function listRooms(): RoomListItem[] {
 }
 
 export function updateSettings(
-  io: TypedServer | null,
   roomId: string,
-  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality; radioMode?: boolean },
+  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -231,59 +212,6 @@ export function updateSettings(
   if (settings.audioQuality !== undefined) {
     room.audioQuality = settings.audioQuality
   }
-
-  // 电台模式切换处理
-  if (settings.radioMode !== undefined && settings.radioMode !== room.radioMode) {
-    if (settings.radioMode) {
-      // 开启电台模式：检查数量上限
-      const radioCount = Array.from(roomRepo.getAll().values()).filter((r) => r.radioMode).length
-      if (radioCount >= config.room.maxRadioRooms) {
-        logger.warn(`Radio room limit reached, cannot enable for room ${roomId}`, { roomId })
-        return
-      }
-      room.radioMode = true
-      // 当前有翡目且正在播放 → 立即启动 conductor
-      if (room.currentTrack && room.playState.isPlaying && io) {
-        const conductor = getOrCreateRadioConductor(roomId, io, (rid) =>
-          playNextTrackInRoom(io, rid, roomRepo.get(rid)?.playMode ?? 'loop-all', { skipDebounce: true }),
-        )
-        conductor.start()
-      }
-      logger.info(`Radio mode ENABLED for room ${roomId}`, { roomId })
-    } else {
-      // 关闭电台模式：销毁 conductor
-      room.radioMode = false
-      destroyRadioConductor(roomId)
-      logger.info(`Radio mode DISABLED for room ${roomId}`, { roomId })
-    }
-  }
-}
-
-/**
- * 房主解散房间 — 立即删除房间（无论普通/电台模式），无宽限期。
- * 由 roomController 的 ROOM_DISSOLVE 事件触发。
- * 返回被解散的房间数据（含用户列表），供 controller 广播 ROOM_DISSOLVED。
- */
-export function dissolveRoom(roomId: string): { users: User[]; name: string } | null {
-  const room = roomRepo.get(roomId)
-  if (!room) return null
-
-  const { users, name } = room
-
-  // 清理所有资源（与 roomLifecycleService 的 scheduleDeletion 回调保持一致）
-  roomRepo.delete(roomId)
-  chatRepo.deleteRoom(roomId)
-  cleanupPlayerRoom(roomId) // 这同时会 destroyRadioConductor
-  cancelDeletionTimer(roomId)
-
-  // 清理所有成员的 socket mapping
-  for (const user of users) {
-    // socket mapping 在 leaveRoom 时清理，这里只需确保数据层已删除
-    void user
-  }
-
-  logger.info(`Room ${roomId} dissolved by owner (had ${users.length} users)`, { roomId })
-  return { users, name }
 }
 
 export function setUserRole(roomId: string, targetUserId: string, role: 'admin' | 'member'): boolean {

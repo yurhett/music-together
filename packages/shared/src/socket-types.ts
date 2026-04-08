@@ -33,7 +33,6 @@ export interface ServerToClientEvents {
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
-  [EVENTS.ROOM_DISSOLVED]: (data: { roomId: string; reason: string }) => void
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_PAUSE]: (data: { playState: ScheduledPlayState }) => void
@@ -71,13 +70,12 @@ export interface ServerToClientEvents {
 
 /** 客户端 → 服务端 事件接口 */
 export interface ClientToServerEvents {
-  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string; radioMode?: boolean }) => void
+  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string }) => void
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_LIST]: () => void
-  [EVENTS.ROOM_SETTINGS]: (data: { name?: string; password?: string | null; audioQuality?: AudioQuality; radioMode?: boolean }) => void
+  [EVENTS.ROOM_SETTINGS]: (data: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
-  [EVENTS.ROOM_DISSOLVE]: () => void
 
   [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
   [EVENTS.PLAYER_PAUSE]: () => void

@@ -35,10 +35,10 @@ export class InMemoryRoomRepository implements RoomRepository {
     return Array.from(this.rooms.values()).map((room) => ({
       id: room.id,
       name: room.name,
+      hasPassword: room.password !== null,
       userCount: room.users.length,
       currentTrackTitle: room.currentTrack?.title ?? null,
       currentTrackArtist: room.currentTrack?.artist.join(', ') ?? null,
-      radioMode: room.radioMode,
     }))
   }
 

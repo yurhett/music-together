@@ -10,10 +10,6 @@ export const EVENTS = {
   ROOM_USER_LEFT: 'room:user_left',
   ROOM_SETTINGS: 'room:settings',
   ROOM_ERROR: 'room:error',
-  /** 房主解散房间（主动删除） */
-  ROOM_DISSOLVE: 'room:dissolve',
-  /** 服务端广播房间已解散，所有客户端跳回大厅 */
-  ROOM_DISSOLVED: 'room:dissolved',
 
   // Room discovery
   ROOM_LIST: 'room:list',
