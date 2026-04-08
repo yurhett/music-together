@@ -106,12 +106,26 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       // Only accept reports from the conductor
       if (room.hostId !== mapping.userId) return
 
+      // Ignore stale cross-track reports emitted during transition windows
+      // (e.g. previous track tail / silent WAV keep-alive still playing locally).
+      if (parsed.data.trackId && room.currentTrack && parsed.data.trackId !== room.currentTrack.id) {
+        return
+      }
+
       // Reject stale reports from a sleeping conductor: if the reported position is
       // far behind the server's estimate, the conductor likely just woke from sleep
       // and hasn't drift-corrected yet.  Accepting this would poison the server
       // state and cause all other clients to seek backwards.
       if (room.playState.isPlaying) {
         const estimated = estimateCurrentTime(mapping.roomId)
+
+        // Symmetric guard for "too far ahead" reports: a cross-track race can
+        // otherwise poison server state and make the new song jump near tail.
+        // We do NOT force-accept this direction.
+        if (parsed.data.currentTime - estimated > 3) {
+          return
+        }
+
         if (!playerService.validateConductorReport(mapping.roomId, currentTime, estimated)) {
           return
         }

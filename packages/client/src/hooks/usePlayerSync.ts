@@ -277,9 +277,11 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
     const report = () => {
       const { room } = useRoomStore.getState()
       const myId = storage.getUserId()
-      if (room?.hostId === myId && howlRef.current?.playing()) {
+      const { mediaSessionLoading } = usePlayerStore.getState()
+      if (room?.hostId === myId && room.currentTrack && !mediaSessionLoading && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
+          trackId: room.currentTrack.id,
           hostServerTime: getServerTime(),
         })
       }
@@ -298,9 +300,11 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
       // 1. conductor 报告：让服务端立即刷新 playState（已有逻辑，保留）
       const { room: r } = useRoomStore.getState()
       const myId = storage.getUserId()
-      if (r?.hostId === myId && howlRef.current?.playing()) {
+      const { mediaSessionLoading } = usePlayerStore.getState()
+      if (r?.hostId === myId && r.currentTrack && !mediaSessionLoading && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
+          trackId: r.currentTrack.id,
           hostServerTime: getServerTime(),
         })
       }

@@ -29,48 +29,51 @@ export function useMediaSession({
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
 
-    // 各操作直接调用外部传入的回调（已通过 useCallback 稳定引用）
-    const handlers: [MediaSessionAction, MediaSessionActionHandler | null][] = [
-      ['nexttrack', () => onNext()],
-      ['previoustrack', () => onPrev()],
-      ['play', () => onPlay()],
-      ['pause', () => onPause()],
-      [
-        'seekto',
-        (details: MediaSessionActionDetails) => {
-          if (details.seekTime != null) {
-            onSeek(details.seekTime)
-          }
-        },
-      ],
-      [
-        'seekbackward',
-        (details: MediaSessionActionDetails) => {
-          const current = usePlayerStore.getState().currentTime
-          onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
-        },
-      ],
-      [
-        'seekforward',
-        (details: MediaSessionActionDetails) => {
-          const { currentTime, duration } = usePlayerStore.getState()
-          onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
-        },
-      ],
-    ]
-
-    for (const [action, handler] of handlers) {
+    const boundActions: MediaSessionAction[] = []
+    const bindAction = (action: MediaSessionAction, handler: MediaSessionActionHandler | null): boolean => {
       try {
         navigator.mediaSession.setActionHandler(action, handler)
+        boundActions.push(action)
+        return true
       } catch (error) {
         console.warn(`[Media Session] 暂不支持 ${action} 操作`)
+        return false
       }
+    }
+
+    // 优先展示上一首/下一首：部分系统媒体面板在 seekbackward/seekforward 与
+    // previoustrack/nexttrack 同时注册时，会优先显示快退/快进并隐藏切歌按钮。
+    const hasPrev = bindAction('previoustrack', () => onPrev())
+    const hasNext = bindAction('nexttrack', () => onNext())
+
+    bindAction('play', () => onPlay())
+    bindAction('pause', () => onPause())
+    bindAction('seekto', (details: MediaSessionActionDetails) => {
+      if (details.seekTime != null) {
+        onSeek(details.seekTime)
+      }
+    })
+
+    // 仅在系统不支持完整上一首/下一首时，才回退到快退/快进。
+    if (!(hasPrev && hasNext)) {
+      bindAction('seekbackward', (details: MediaSessionActionDetails) => {
+        const current = usePlayerStore.getState().currentTime
+        onSeek(Math.max(0, current - (details.seekOffset ?? 10)))
+      })
+      bindAction('seekforward', (details: MediaSessionActionDetails) => {
+        const { currentTime, duration } = usePlayerStore.getState()
+        onSeek(Math.min(duration, currentTime + (details.seekOffset ?? 10)))
+      })
+    } else {
+      // 显式清空，避免某些浏览器保留上一次会话的 seek 按钮。
+      bindAction('seekbackward', null)
+      bindAction('seekforward', null)
     }
 
     return () => {
       // 组件卸载时清理处理器，避免指向旧回调
       if (!('mediaSession' in navigator)) return
-      for (const [action] of handlers) {
+      for (const action of boundActions) {
         try {
           navigator.mediaSession.setActionHandler(action, null)
         } catch {
@@ -97,44 +100,55 @@ export function useMediaSession({
   // ----- 同步 currentTrack → MediaMetadata（封面、标题、歌手）-----
   useEffect(() => {
     if (!('mediaSession' in navigator) || !('MediaMetadata' in window)) return
-    const unsub = usePlayerStore.subscribe((state, prev) => {
-      if (state.currentTrack === prev.currentTrack) return
+
+    const toArtwork = (cover?: string): MediaImage[] =>
+      cover
+        ? [
+            { src: cover, sizes: '96x96', type: 'image/jpeg' },
+            { src: cover, sizes: '128x128', type: 'image/jpeg' },
+            { src: cover, sizes: '256x256', type: 'image/jpeg' },
+            { src: cover, sizes: '512x512', type: 'image/jpeg' },
+          ]
+        : []
+
+    const cloneArtwork = (artwork: readonly MediaImage[] | null | undefined): MediaImage[] =>
+      artwork ? Array.from(artwork, (item) => ({ src: item.src, sizes: item.sizes, type: item.type })) : []
+
+    const syncMetadata = (state: ReturnType<typeof usePlayerStore.getState>) => {
       const track = state.currentTrack
+
+      if (state.mediaSessionLoading) {
+        const previous = navigator.mediaSession.metadata
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: '⏳ 加载中...',
+          artist: previous?.artist ?? track?.artist.join(' / ') ?? '',
+          album: previous?.album ?? track?.album ?? '',
+          artwork: previous?.artwork?.length ? cloneArtwork(previous.artwork) : toArtwork(track?.cover),
+        })
+        return
+      }
+
       if (!track) {
         navigator.mediaSession.metadata = null
         return
       }
+
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.artist.join(' / '),
         album: track.album ?? '',
-        artwork: track.cover
-          ? [
-              { src: track.cover, sizes: '96x96', type: 'image/jpeg' },
-              { src: track.cover, sizes: '128x128', type: 'image/jpeg' },
-              { src: track.cover, sizes: '256x256', type: 'image/jpeg' },
-              { src: track.cover, sizes: '512x512', type: 'image/jpeg' },
-            ]
-          : [],
-      })
-    })
-    // 立即同步当前曲目
-    const track = usePlayerStore.getState().currentTrack
-    if (track) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title,
-        artist: track.artist.join(' / '),
-        album: track.album ?? '',
-        artwork: track.cover
-          ? [
-              { src: track.cover, sizes: '96x96', type: 'image/jpeg' },
-              { src: track.cover, sizes: '128x128', type: 'image/jpeg' },
-              { src: track.cover, sizes: '256x256', type: 'image/jpeg' },
-              { src: track.cover, sizes: '512x512', type: 'image/jpeg' },
-            ]
-          : [],
+        artwork: toArtwork(track.cover),
       })
     }
+
+    const unsub = usePlayerStore.subscribe((state, prev) => {
+      if (state.currentTrack === prev.currentTrack && state.mediaSessionLoading === prev.mediaSessionLoading) return
+      syncMetadata(state)
+    })
+
+    // 立即同步当前曲目/加载状态
+    syncMetadata(usePlayerStore.getState())
+
     return unsub
   }, [])
 

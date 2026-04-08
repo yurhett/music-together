@@ -6,6 +6,7 @@ import { storage } from '@/lib/storage'
 interface PlayerStore {
   currentTrack: Track | null
   isPlaying: boolean
+  mediaSessionLoading: boolean
   currentTime: number
   duration: number
   volume: number
@@ -17,6 +18,7 @@ interface PlayerStore {
 
   setCurrentTrack: (track: Track | null) => void
   setIsPlaying: (playing: boolean) => void
+  setMediaSessionLoading: (loading: boolean) => void
   setCurrentTime: (time: number) => void
   setDuration: (duration: number) => void
   setVolume: (volume: number) => void
@@ -30,6 +32,7 @@ interface PlayerStore {
 export const usePlayerStore = create<PlayerStore>((set) => ({
   currentTrack: null,
   isPlaying: false,
+  mediaSessionLoading: false,
   currentTime: 0,
   duration: 0,
   volume: storage.getVolume(),
@@ -41,6 +44,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
+  setMediaSessionLoading: (loading) => set({ mediaSessionLoading: loading }),
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
   setVolume: (volume) => {
@@ -55,6 +59,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
     set({
       currentTrack: null,
       isPlaying: false,
+      mediaSessionLoading: false,
       currentTime: 0,
       duration: 0,
       lyric: '',

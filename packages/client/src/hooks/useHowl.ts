@@ -176,6 +176,7 @@ export function useHowl(onTrackEnd: () => void) {
       console.log('[Audio Debug] ✨ native "ended" event triggered!')
       // 以无声 WAV 循环播放，避免系统立马挂起 JS 导致无法拉取下一首歌
       if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
+        usePlayerStore.getState().setMediaSessionLoading(true)
         console.log('[Audio Debug] Track ended. Starting silent WAV keep-alive...')
         globalAudio.src = SILENT_WAV_BASE64
         globalAudio.loop = true
@@ -183,15 +184,6 @@ export function useHowl(onTrackEnd: () => void) {
         globalAudio.volume = 1
         globalAudio.play().then(() => {
           console.log('[Audio Debug] Silent WAV is playing successfully (Tab speaker icon should remain on).')
-          if ('mediaSession' in navigator && navigator.mediaSession.metadata) {
-            const currentMeta = navigator.mediaSession.metadata
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: `⏳ 加载中...`,
-              artist: currentMeta.artist,
-              album: currentMeta.album,
-              artwork: currentMeta.artwork ? [...currentMeta.artwork] : [],
-            })
-          }
         }).catch((e) => {
           console.warn('[Audio Debug] Silent WAV play failed:', e)
         })
@@ -214,6 +206,7 @@ export function useHowl(onTrackEnd: () => void) {
       retryRef.current = false
       if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         console.error('Audio load error (after retry):', globalAudio.error)
+        usePlayerStore.getState().setMediaSessionLoading(true)
         toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
         onTrackEnd()
       }
@@ -251,7 +244,12 @@ export function useHowl(onTrackEnd: () => void) {
       trackTitleRef.current = track.title
       retryRef.current = false
 
-      if (!track.streamUrl) return
+      usePlayerStore.getState().setMediaSessionLoading(true)
+
+      if (!track.streamUrl) {
+        usePlayerStore.getState().setMediaSessionLoading(false)
+        return
+      }
 
       const loadStartTime = Date.now()
       const currentVolume = usePlayerStore.getState().volume
@@ -265,6 +263,8 @@ export function useHowl(onTrackEnd: () => void) {
       const onCanPlay = () => {
         globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
+
+        usePlayerStore.getState().setMediaSessionLoading(false)
 
         const d = globalAudio.duration
         if (Number.isFinite(d) && d > 0) {
@@ -353,6 +353,7 @@ export function useHowl(onTrackEnd: () => void) {
         clearTimeout(playErrorTimerRef.current)
         playErrorTimerRef.current = null
       }
+      usePlayerStore.getState().setMediaSessionLoading(false)
       stopTimeUpdate()
       globalAudio.pause()
       globalAudio.removeAttribute('src')
