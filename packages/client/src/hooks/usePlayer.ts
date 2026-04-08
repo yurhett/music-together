@@ -25,6 +25,8 @@ import { usePlayerSync } from './usePlayerSync'
 export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
+  const RECOVERY_GRACE_MS = 3000
+  const RECOVERY_DELAY_MS = 700
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
@@ -34,6 +36,9 @@ export function usePlayer() {
   const autoNext = useCallback(() => {
     const { room } = useRoomStore.getState()
     const myId = storage.getUserId()
+    if (room?.roomMode === 'radio') {
+      return
+    }
     if (room?.hostId === myId) {
       socket.emit(EVENTS.PLAYER_NEXT)
     }
@@ -58,6 +63,7 @@ export function usePlayer() {
 
   // Listen for PLAYER_PLAY events (new track load)
   const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
@@ -75,6 +81,11 @@ export function usePlayer() {
         return
       }
       loadingRef.current = { trackId: data.track.id, ts: now, serverTimestamp: data.playState.serverTimestamp }
+
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+        recoveryTimerRef.current = null
+      }
 
       // Keep roomStore in sync so recovery effect sees the correct currentTrack
       useRoomStore.getState().updateRoom({
@@ -122,6 +133,10 @@ export function usePlayer() {
         clearTimeout(playTimerRef.current)
         playTimerRef.current = null
       }
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+        recoveryTimerRef.current = null
+      }
     }
   }, [socket, loadTrack, fetchLyric])
 
@@ -161,25 +176,47 @@ export function usePlayer() {
 
       // Server has track but client doesn't (HMR reset / missed PLAYER_PLAY)
       if (roomTrack?.streamUrl && (!playerTrack || !howlRef.current)) {
-        // Skip if onPlayerPlay is already handling this track — its updateRoom()
-        // call triggers this subscription synchronously before loadTrack runs,
-        // so playerTrack/howlRef are still stale. Checking loadingRef avoids
-        // a redundant double-load.
-        // However, if howlRef is null despite loadingRef pointing to this track,
-        // the previous loadTrack failed (e.g. !streamUrl) and we should retry.
-        if (loadingRef.current?.trackId === roomTrack.id && howlRef.current) return
+        const now = Date.now()
+        const hasRecentPlayerPlay = loadingRef.current !== null && now - loadingRef.current.ts < RECOVERY_GRACE_MS
 
-        hasRecovered = true
-        // Cancel any pending scheduled load from onPlayerPlay to prevent
-        // a second loadTrack call when the timer fires after recovery.
-        if (playTimerRef.current) {
-          clearTimeout(playTimerRef.current)
-          playTimerRef.current = null
-        }
-        const ps = room.playState
-        const elapsed = ps.isPlaying ? (getServerTime() - ps.serverTimestamp) / 1000 : 0
-        loadTrack(roomTrack, ps.currentTime + Math.max(0, elapsed), ps.isPlaying)
-        fetchLyric(roomTrack)
+        // Wait for the normal PLAYER_PLAY flow when it has just arrived.
+        // This avoids a double load race: onPlayerPlay (seek=0) + recover (mid-song seek).
+        if (hasRecentPlayerPlay || playTimerRef.current) return
+
+        // Delay recovery slightly to give PLAYER_PLAY a chance to arrive first.
+        if (recoveryTimerRef.current) return
+
+        recoveryTimerRef.current = setTimeout(() => {
+          recoveryTimerRef.current = null
+          if (hasRecovered) return
+
+          const latestRoom = useRoomStore.getState().room
+          const latestTrack = latestRoom?.currentTrack
+          const latestPlayerTrack = usePlayerStore.getState().currentTrack
+          if (!latestRoom || !latestTrack?.streamUrl) return
+
+          const now2 = Date.now()
+          const hasRecentPlayerPlay2 = loadingRef.current !== null && now2 - loadingRef.current.ts < RECOVERY_GRACE_MS
+          if (hasRecentPlayerPlay2 || playTimerRef.current) return
+
+          // Cancel any pending scheduled load from onPlayerPlay to prevent
+          // a second loadTrack call when the timer fires after recovery.
+          if (playTimerRef.current) {
+            clearTimeout(playTimerRef.current)
+            playTimerRef.current = null
+          }
+
+          if (latestPlayerTrack?.id === latestTrack.id && howlRef.current) {
+            hasRecovered = true
+            return
+          }
+
+          hasRecovered = true
+          const ps = latestRoom.playState
+          const elapsed = ps.isPlaying ? (getServerTime() - ps.serverTimestamp) / 1000 : 0
+          loadTrack(latestTrack, ps.currentTime + Math.max(0, elapsed), ps.isPlaying)
+          fetchLyric(latestTrack)
+        }, RECOVERY_DELAY_MS)
       }
     }
 
@@ -188,10 +225,16 @@ export function usePlayer() {
 
     // Subscribe for future changes (covers reconnect where ROOM_STATE arrives later)
     const unsubscribe = useRoomStore.subscribe(recover)
-    return unsubscribe
+    return () => {
+      unsubscribe()
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+        recoveryTimerRef.current = null
+      }
+    }
     // `socket` intentionally excluded — effect subscribes to roomStore, not socket directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadTrack, fetchLyric])
+  }, [loadTrack, fetchLyric, RECOVERY_DELAY_MS, RECOVERY_GRACE_MS])
 
   // -----------------------------------------------------------------------
   // Controls — emit to server only.  Server broadcasts ScheduledPlayState

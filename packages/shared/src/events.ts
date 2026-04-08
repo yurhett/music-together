@@ -9,6 +9,8 @@ export const EVENTS = {
   ROOM_USER_JOINED: 'room:user_joined',
   ROOM_USER_LEFT: 'room:user_left',
   ROOM_SETTINGS: 'room:settings',
+  ROOM_SET_MODE: 'room:set_mode',
+  ROOM_DISSOLVE: 'room:dissolve',
   ROOM_ERROR: 'room:error',
 
   // Room discovery

@@ -183,7 +183,8 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
       // host reports) pulls the conductor forward/backward.
       const { room: syncRoom } = useRoomStore.getState()
       const myId = storage.getUserId()
-      if (syncRoom?.hostId === myId) return
+      const isHost = syncRoom?.hostId === myId
+      if (isHost && syncRoom?.roomMode !== 'radio') return
 
       // Use NTP-calibrated server time for accurate delay estimation
       const networkDelaySec = Math.max(

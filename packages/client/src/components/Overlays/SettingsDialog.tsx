@@ -13,6 +13,7 @@ import { MembersSection } from './Settings/MembersSection'
 import { AppearanceSection } from './Settings/AppearanceSection'
 import { LyricsSection } from './Settings/LyricsSection'
 import { PlatformHub } from './Settings/PlatformHub'
+import type { RoomMode } from '@music-together/shared'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +30,8 @@ interface SettingsDialogProps {
     audioQuality?: import('@music-together/shared').AudioQuality
   }) => void
   onSetUserRole?: (userId: string, role: 'admin' | 'member') => void
+  onSetRoomMode?: (mode: RoomMode) => void
+  onDissolveRoom?: () => void
   initialTab?: SettingsTab
 }
 
@@ -84,6 +87,8 @@ export function SettingsDialog({
   onOpenChange,
   onUpdateSettings,
   onSetUserRole,
+  onSetRoomMode,
+  onDissolveRoom,
   initialTab,
 }: SettingsDialogProps) {
   const [tab, setTab] = useState<SettingsTab>('room')
@@ -142,7 +147,13 @@ export function SettingsDialog({
           ) : (
             <ScrollArea className="min-h-0 flex-1">
               <div className="p-4 sm:p-6">
-                {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
+                {tab === 'room' && (
+                  <RoomSettingsSection
+                    onUpdateSettings={onUpdateSettings}
+                    onSetRoomMode={onSetRoomMode}
+                    onDissolveRoom={onDissolveRoom}
+                  />
+                )}
                 {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}
                 {tab === 'lyrics' && <LyricsSection />}
                 {tab === 'appearance' && <AppearanceSection />}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Lock, Music, Loader2 } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
+import type { RoomMode } from '@music-together/shared'
 import {
   ResponsiveDialog,
   ResponsiveDialogBody,
@@ -16,7 +17,7 @@ import { Label } from '@/components/ui/label'
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string) => void
+  onCreateRoom: (nickname: string, roomName?: string, password?: string, roomMode?: RoomMode) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -32,11 +33,13 @@ export function CreateRoomDialog({
   const [roomName, setRoomName] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
+  const [roomMode, setRoomMode] = useState<RoomMode>('normal')
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
     if (open) {
       setNickname(defaultNickname)
+      setRoomMode('normal')
     }
   }, [open, defaultNickname])
 
@@ -49,6 +52,7 @@ export function CreateRoomDialog({
       nickname.trim(),
       roomName.trim() || undefined,
       passwordEnabled && password.trim() ? password.trim() : undefined,
+      roomMode,
     )
   }
 
@@ -86,6 +90,23 @@ export function CreateRoomDialog({
             </div>
 
             <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="room-mode-toggle"
+                  checked={roomMode === 'radio'}
+                  onCheckedChange={(checked) => setRoomMode(checked ? 'radio' : 'normal')}
+                />
+                <Label
+                  htmlFor="room-mode-toggle"
+                  className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground"
+                >
+                  电台模式
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {roomMode === 'radio' ? '0 人时房间不会自动清理，播放由服务端持续推进。' : '普通模式下，房间 0 人将进入自动清理。'}
+              </p>
+
               <div className="flex items-center gap-2">
                 <Switch id="password-toggle" checked={passwordEnabled} onCheckedChange={setPasswordEnabled} />
                 <Label

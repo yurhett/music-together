@@ -3,22 +3,25 @@ import {
   EVENTS,
   roomCreateSchema,
   roomJoinSchema,
+  roomSetModeSchema,
   roomSettingsSchema,
   setRoleSchema,
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
-import { createWithOwnerOnly } from '../middleware/withControl.js'
+import { createWithOwnerOnly, createWithPermission } from '../middleware/withControl.js'
 import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
+import { destroyRoom } from '../services/roomLifecycleService.js'
 import * as roomService from '../services/roomService.js'
 import * as voteService from '../services/voteService.js'
 import { logger } from '../utils/logger.js'
 
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   const withOwnerOnly = createWithOwnerOnly(io)
+  const withPermission = createWithPermission(io)
 
   // ---- Room list (不需要在房间内) ----
   socket.on(EVENTS.ROOM_LIST, () => {
@@ -40,7 +43,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { nickname, roomName, password } = parsed.data
+      const { nickname, roomName, password, roomMode } = parsed.data
 
       // Auto-leave any previous room before creating a new one
       handleLeave(io, socket, 'auto-leave before create', true)
@@ -51,6 +54,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         roomName,
         password,
         socket.data.identityUserId,
+        roomMode,
       )
 
       socket.leave('lobby')
@@ -208,6 +212,55 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       // 密码变更也要刷新大厅列表
       roomService.broadcastRoomList(io)
+    }),
+  )
+
+  // ---- Room mode (房主/管理员) ----
+  socket.on(
+    EVENTS.ROOM_SET_MODE,
+    withPermission('set-room-mode', 'Room', (ctx, raw) => {
+      const parsed = roomSetModeSchema.safeParse(raw)
+      if (!parsed.success) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: parsed.error.issues[0]?.message ?? '输入格式错误',
+        })
+        return
+      }
+
+      const success = roomService.setRoomMode(ctx.roomId, parsed.data.mode)
+      if (!success) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.ROOM_NOT_FOUND,
+          message: '房间不存在',
+        })
+        return
+      }
+
+      playerService.handleRoomModeChanged(ctx.io, ctx.roomId)
+
+      const updatedRoom = roomRepo.get(ctx.roomId)
+      if (!updatedRoom) return
+
+      const owner = updatedRoom.users.find((u) => u.role === 'owner')
+      const ownerSocketId = owner ? roomRepo.getSocketIdForUser(ctx.roomId, owner.id) : null
+      if (ownerSocketId) {
+        io.to(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(updatedRoom))
+        io.to(ctx.roomId).except(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+      } else {
+        io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+      }
+
+      roomService.broadcastRoomList(io)
+      logger.info(`Room ${ctx.roomId} mode updated to ${parsed.data.mode}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  // ---- Dissolve room (房主/管理员) ----
+  socket.on(
+    EVENTS.ROOM_DISSOLVE,
+    withPermission('dissolve-room', 'Room', (ctx) => {
+      destroyRoom(ctx.io, ctx.roomId)
     }),
   )
 

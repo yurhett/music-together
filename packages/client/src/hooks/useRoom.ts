@@ -2,6 +2,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { resetAllRoomState } from '@/lib/resetStores'
 import { storage } from '@/lib/storage'
 import { EVENTS } from '@music-together/shared'
+import type { RoomMode } from '@music-together/shared'
 import { useCallback } from 'react'
 import { useRoomStore } from '@/stores/roomStore'
 
@@ -51,5 +52,16 @@ export function useRoom() {
     [socket],
   )
 
-  return { leaveRoom, updateSettings, setUserRole }
+  const setRoomMode = useCallback(
+    (mode: RoomMode) => {
+      socket.emit(EVENTS.ROOM_SET_MODE, { mode })
+    },
+    [socket],
+  )
+
+  const dissolveRoom = useCallback(() => {
+    socket.emit(EVENTS.ROOM_DISSOLVE)
+  }, [socket])
+
+  return { leaveRoom, updateSettings, setUserRole, setRoomMode, dissolveRoom }
 }

@@ -1,4 +1,4 @@
-import type { AudioQuality, ChatMessage, PlayMode, PlayState, RoomListItem, Track, User } from '@music-together/shared'
+import type { AudioQuality, ChatMessage, PlayMode, PlayState, RoomListItem, RoomMode, Track, User } from '@music-together/shared'
 
 /** 服务端内部房间数据模型 -- 含密码（永远不发送给客户端） */
 export interface RoomData {
@@ -10,6 +10,7 @@ export interface RoomData {
   hostId: string
   /** 持久化 admin 用户 ID 集合（离开/回来自动恢复 admin） */
   adminUserIds: Set<string>
+  roomMode: RoomMode
   audioQuality: AudioQuality
   users: User[]
   queue: Track[]
@@ -33,6 +34,8 @@ export interface RoomRepository {
   setSocketMapping(socketId: string, roomId: string, userId: string): void
   getSocketMapping(socketId: string): SocketMapping | undefined
   deleteSocketMapping(socketId: string): void
+  /** Delete all socket mappings in a room (used by forced room dissolve) */
+  deleteSocketMappingsForRoom(roomId: string): void
   /** Check if a user has another active socket in the same room (excluding a specific socket) */
   hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean
   /** 根据 roomId + userId 查找对应的 socketId（用于定向发送） */

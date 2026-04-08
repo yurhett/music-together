@@ -43,7 +43,7 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
   const { socket, isConnected } = useSocketContext()
-  const { leaveRoom, updateSettings, setUserRole } = useRoom()
+  const { leaveRoom, updateSettings, setUserRole, setRoomMode, dissolveRoom } = useRoom()
   const { play, pause, seek, next, prev } = usePlayer()
   const { addTrack, removeTrack, reorderTracks, clearQueue } = useQueue()
 
@@ -367,6 +367,8 @@ export default function RoomPage() {
             }}
             onUpdateSettings={updateSettings}
             onSetUserRole={setUserRole}
+            onSetRoomMode={setRoomMode}
+            onDissolveRoom={dissolveRoom}
             initialTab={settingsInitialTab}
           />
         </div>

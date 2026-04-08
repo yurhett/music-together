@@ -4,6 +4,7 @@ export const ERROR_CODE = {
   INVALID_DATA: 'INVALID_DATA',
   INTERNAL: 'INTERNAL',
   ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
+  ROOM_DISSOLVED: 'ROOM_DISSOLVED',
   WRONG_PASSWORD: 'WRONG_PASSWORD',
   JOIN_FAILED: 'JOIN_FAILED',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
@@ -25,6 +26,8 @@ export type MusicSource = 'netease' | 'tencent' | 'kugou'
 export type UserRole = 'owner' | 'admin' | 'member'
 
 export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
+
+export type RoomMode = 'normal' | 'radio'
 
 /** 音频质量档位 (kbps)：标准 / 较高 / HQ / 无损 */
 export type AudioQuality = 128 | 192 | 320 | 999
@@ -54,6 +57,7 @@ export interface RoomState {
   name: string
   creatorId: string
   hostId: string
+  roomMode: RoomMode
   hasPassword: boolean
   /** 密码明文（仅房间内成员可见） */
   password?: string | null

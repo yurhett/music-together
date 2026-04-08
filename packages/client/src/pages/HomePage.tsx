@@ -13,7 +13,7 @@ import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
-import { EVENTS, ERROR_CODE, type RoomListItem, type RoomState } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, type RoomListItem, type RoomMode, type RoomState } from '@music-together/shared'
 import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -145,11 +145,11 @@ export default function HomePage() {
     }
   }, [socket, navigate, setRoom])
 
-  const handleCreateRoom = async (nickname: string, roomName?: string, password?: string) => {
+  const handleCreateRoom = async (nickname: string, roomName?: string, password?: string, roomMode?: RoomMode) => {
     await unlockAudio()
     storage.setNickname(nickname)
     setActionLoading(true)
-    createRoom(nickname, roomName, password)
+    createRoom(nickname, roomName, password, roomMode)
   }
 
   const handleRoomClick = async (room: RoomListItem) => {

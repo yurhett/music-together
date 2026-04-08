@@ -17,6 +17,8 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 // ---------------------------------------------------------------------------
 
 const playMutexes = new Map<string, Promise<unknown>>()
+const radioAutoNextTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const radioAutoNextGeneration = new Map<string, number>()
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
   const prev = playMutexes.get(roomId) ?? Promise.resolve()
@@ -27,6 +29,64 @@ function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
     if (playMutexes.get(roomId) === next) playMutexes.delete(roomId)
   })
   return next
+}
+
+function clearRadioAutoNextTimer(roomId: string): void {
+  const timer = radioAutoNextTimers.get(roomId)
+  if (timer) {
+    clearTimeout(timer)
+    radioAutoNextTimers.delete(roomId)
+  }
+}
+
+function bumpRadioAutoNextGeneration(roomId: string): number {
+  const next = (radioAutoNextGeneration.get(roomId) ?? 0) + 1
+  radioAutoNextGeneration.set(roomId, next)
+  return next
+}
+
+function cancelRadioAutoNext(roomId: string): void {
+  clearRadioAutoNextTimer(roomId)
+  bumpRadioAutoNextGeneration(roomId)
+}
+
+function scheduleRadioAutoNext(io: TypedServer, roomId: string): void {
+  clearRadioAutoNextTimer(roomId)
+  const generation = bumpRadioAutoNextGeneration(roomId)
+
+  const room = roomRepo.get(roomId)
+  if (!room || room.roomMode !== 'radio' || !room.currentTrack || !room.playState.isPlaying) return
+
+  const duration = room.currentTrack.duration
+  if (!duration || duration <= 0) return
+
+  const currentTime = estimateCurrentTime(roomId)
+  const remainingMs = Math.max(0, (duration - currentTime) * 1000)
+  const trackId = room.currentTrack.id
+
+  const timer = setTimeout(() => {
+    // A newer schedule/cancel has superseded this timer.
+    if (radioAutoNextGeneration.get(roomId) !== generation) return
+
+    radioAutoNextTimers.delete(roomId)
+
+    const latestRoom = roomRepo.get(roomId)
+    if (!latestRoom) return
+    if (latestRoom.roomMode !== 'radio' || !latestRoom.currentTrack || !latestRoom.playState.isPlaying) return
+
+    // Ignore stale timers created for an old track timeline.
+    if (latestRoom.currentTrack.id !== trackId) {
+      return
+    }
+
+    logger.info(`Radio auto-next triggered in room ${roomId}`, { roomId })
+
+    playNextTrackInRoom(io, roomId, latestRoom.playMode, { skipDebounce: true }).catch((err) => {
+      logger.error('Radio auto-next failed', err, { roomId })
+    })
+  }, Math.max(100, Math.ceil(remainingMs)))
+
+  radioAutoNextTimers.set(roomId, timer)
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +232,8 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
     playState: scheduled(room.playState, roomId, scheduleTime),
   })
 
+  scheduleRadioAutoNext(io, roomId)
+
   // 通知大厅用户当前播放曲目变化
   broadcastRoomList(io)
 
@@ -187,6 +249,7 @@ export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: 
   room.playState = { ...room.playState, isPlaying: true, serverTimestamp: scheduleTime }
   // All clients (including initiator) must execute at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: scheduled(room.playState, roomId, scheduleTime) })
+  scheduleRadioAutoNext(io, roomId)
 }
 
 export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
@@ -196,6 +259,7 @@ export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: T
   // Snapshot estimated position before pausing so resume starts from the correct point
   const snapshotTime = estimateCurrentTime(roomId)
   room.playState = { isPlaying: false, currentTime: snapshotTime, serverTimestamp: Date.now() }
+  cancelRadioAutoNext(roomId)
   // All clients must pause at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState: scheduled(room.playState, roomId) })
 }
@@ -213,6 +277,12 @@ export function seekTrack(io: TypedServer, roomId: string, currentTime: number, 
   }
   // All clients must seek at the same scheduled moment
   io.to(roomId).emit(EVENTS.PLAYER_SEEK, { playState: scheduled(room.playState, roomId, scheduleTime) })
+
+  if (room.playState.isPlaying) {
+    scheduleRadioAutoNext(io, roomId)
+  } else {
+    cancelRadioAutoNext(roomId)
+  }
 }
 
 export function updatePlayState(roomId: string, update: Partial<PlayState>): void {
@@ -225,6 +295,9 @@ export function updatePlayState(roomId: string, update: Partial<PlayState>): voi
 export function setCurrentTrack(roomId: string, track: Track | null): void {
   const room = roomRepo.get(roomId)
   if (room) {
+    if (track === null) {
+      cancelRadioAutoNext(roomId)
+    }
     room.currentTrack = track
     room.playState = {
       isPlaying: track !== null,
@@ -240,6 +313,7 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
  * Used when no next track is available (queue empty, track removed, queue cleared).
  */
 export function stopPlayback(io: TypedServer, roomId: string): void {
+  cancelRadioAutoNext(roomId)
   setCurrentTrack(roomId, null)
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, {
     playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
@@ -351,9 +425,10 @@ export async function syncPlaybackToSocket(
   const isAloneInRoom = room.users.length === 1
 
   if (room.currentTrack?.streamUrl) {
-    // Alone in room + track was paused → auto-resume (user rejoining)
-    const shouldAutoPlay = isAloneInRoom || room.playState.isPlaying
-    if (isAloneInRoom && !room.playState.isPlaying) {
+    // Normal mode keeps the old behavior (alone rejoin auto-resume).
+    // Radio mode must strictly follow server play/pause state.
+    const shouldAutoPlay = room.roomMode === 'radio' ? room.playState.isPlaying : isAloneInRoom || room.playState.isPlaying
+    if (room.roomMode !== 'radio' && isAloneInRoom && !room.playState.isPlaying) {
       room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
     }
     socket.emit(EVENTS.PLAYER_PLAY, {
@@ -390,9 +465,21 @@ const CONDUCTOR_REJECT_DRIFT_THRESHOLD_S = 3
 
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
+  cancelRadioAutoNext(roomId)
   lastNextTimestamp.delete(roomId)
   conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
+  radioAutoNextGeneration.delete(roomId)
+}
+
+export function handleRoomModeChanged(io: TypedServer, roomId: string): void {
+  const room = roomRepo.get(roomId)
+  if (!room || room.roomMode !== 'radio') {
+    cancelRadioAutoNext(roomId)
+    return
+  }
+
+  scheduleRadioAutoNext(io, roomId)
 }
 
 /**

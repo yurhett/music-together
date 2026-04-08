@@ -8,10 +8,10 @@ import { Switch } from '@/components/ui/switch'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
-import type { AudioQuality } from '@music-together/shared'
+import type { AudioQuality, RoomMode } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { SettingRow } from './SettingRow'
 
@@ -28,14 +28,18 @@ function getQualityLabel(quality: AudioQuality): string {
 
 interface RoomSettingsSectionProps {
   onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
+  onSetRoomMode?: (mode: RoomMode) => void
+  onDissolveRoom?: () => void
 }
 
-export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
+export function RoomSettingsSection({ onUpdateSettings, onSetRoomMode, onDissolveRoom }: RoomSettingsSectionProps) {
   const room = useRoomStore((s) => s.room)
   const currentUser = useRoomStore((s) => s.currentUser)
   const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isOwner = currentUser?.role === 'owner'
+  const canManageRoom = currentUser?.role === 'owner' || currentUser?.role === 'admin'
+  const roomMode = room?.roomMode ?? 'normal'
 
   const driftDisplay = useMemo(() => {
     const ms = Math.round(syncDrift * 1000)
@@ -59,11 +63,22 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   // Room name editing state
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
+  const [confirmDissolve, setConfirmDissolve] = useState(false)
+  const dissolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     setPasswordEnabled(room?.hasPassword ?? false)
     setPasswordInput('')
   }, [room?.hasPassword])
+
+  useEffect(() => {
+    return () => {
+      if (dissolveTimerRef.current) {
+        clearTimeout(dissolveTimerRef.current)
+        dissolveTimerRef.current = null
+      }
+    }
+  }, [])
 
   const copyRoomLink = () => {
     const url = `${window.location.origin}/room/${room?.id}`
@@ -114,6 +129,28 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const handleCancelEditName = () => {
     setEditingName(false)
     setNameInput('')
+  }
+
+  const handleDissolveRoom = () => {
+    if (!onDissolveRoom) return
+
+    if (!confirmDissolve) {
+      setConfirmDissolve(true)
+      if (dissolveTimerRef.current) clearTimeout(dissolveTimerRef.current)
+      dissolveTimerRef.current = setTimeout(() => {
+        dissolveTimerRef.current = null
+        setConfirmDissolve(false)
+      }, 3000)
+      toast.warning('再次点击可解散房间')
+      return
+    }
+
+    if (dissolveTimerRef.current) {
+      clearTimeout(dissolveTimerRef.current)
+      dissolveTimerRef.current = null
+    }
+    setConfirmDissolve(false)
+    onDissolveRoom()
   }
 
   return (
@@ -218,6 +255,29 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           )}
         </SettingRow>
 
+        <SettingRow label="房间类型" description={canManageRoom ? '切换后立即生效' : undefined}>
+          {canManageRoom && onSetRoomMode ? (
+            <Select
+              value={roomMode}
+              onValueChange={(value) => {
+                const nextMode = value as RoomMode
+                onSetRoomMode(nextMode)
+                toast.success(nextMode === 'radio' ? '已切换为电台模式' : '已切换为普通模式')
+              }}
+            >
+              <SelectTrigger className="h-8 w-[145px] text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">普通模式</SelectItem>
+                <SelectItem value="radio">电台模式</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-sm text-muted-foreground">{roomMode === 'radio' ? '电台模式' : '普通模式'}</span>
+          )}
+        </SettingRow>
+
         <SettingRow label="密码保护">
           {room?.hasPassword ? (
             <div className="flex items-center gap-2">
@@ -274,6 +334,19 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               </Button>
             </div>
           )}
+        </div>
+      )}
+
+      {canManageRoom && onDissolveRoom && (
+        <div>
+          <h3 className="text-base font-semibold text-destructive">生命周期</h3>
+          <Separator className="mt-2 mb-4" />
+
+          <SettingRow label="解散房间" description="立即结束房间生命周期并清理状态">
+            <Button variant={confirmDissolve ? 'destructive' : 'outline'} size="sm" onClick={handleDissolveRoom}>
+              {confirmDissolve ? '确认解散' : '解散房间'}
+            </Button>
+          </SettingRow>
         </div>
       )}
 

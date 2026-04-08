@@ -1,6 +1,7 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
+import { resetAllRoomState } from '@/lib/resetStores'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import type { AudioQuality, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
@@ -84,7 +85,8 @@ export function useRoomState() {
       if (error.code === ERROR_CODE.WRONG_PASSWORD) return
 
       toast.error(error.message)
-      if (error.code === ERROR_CODE.ROOM_NOT_FOUND) {
+      if (error.code === ERROR_CODE.ROOM_NOT_FOUND || error.code === ERROR_CODE.ROOM_DISSOLVED) {
+        resetAllRoomState()
         navigateRef.current('/', { replace: true })
       }
     }

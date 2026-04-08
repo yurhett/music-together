@@ -15,7 +15,7 @@
  */
 
 import type { RoomListItem } from '@music-together/shared'
-import { EVENTS } from '@music-together/shared'
+import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import { config } from '../config.js'
 import type { TypedServer } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
@@ -37,6 +37,16 @@ const roomDeletionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let broadcastTimer: ReturnType<typeof setTimeout> | null = null
 let pendingIO: TypedServer | null = null
 
+function cleanupRoomData(roomId: string): void {
+  roomRepo.deleteSocketMappingsForRoom(roomId)
+  roomRepo.delete(roomId)
+  chatRepo.deleteRoom(roomId)
+  cleanupPlayerRoom(roomId)
+  cleanupVoteRoom(roomId)
+  cleanupAuthRoom(roomId)
+  cleanupRoomRejoinTickets(roomId)
+}
+
 // ---------------------------------------------------------------------------
 // Room deletion timer
 // ---------------------------------------------------------------------------
@@ -52,12 +62,7 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
-      roomRepo.delete(roomId)
-      chatRepo.deleteRoom(roomId)
-      cleanupPlayerRoom(roomId)
-      cleanupVoteRoom(roomId)
-      cleanupAuthRoom(roomId)
-      cleanupRoomRejoinTickets(roomId)
+      cleanupRoomData(roomId)
       roomDeletionTimers.delete(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
       // Notify lobby users that the room is gone
@@ -74,6 +79,25 @@ export function cancelDeletionTimer(roomId: string): void {
     roomDeletionTimers.delete(roomId)
     logger.info(`Room ${roomId} deletion cancelled — user rejoined`, { roomId })
   }
+}
+
+export function destroyRoom(io: TypedServer, roomId: string): void {
+  const room = roomRepo.get(roomId)
+  if (!room) return
+
+  io.to(roomId).emit(EVENTS.ROOM_ERROR, {
+    code: ERROR_CODE.ROOM_DISSOLVED,
+    message: '房间已被房主或管理员解散',
+  })
+
+  io.in(roomId).socketsJoin('lobby')
+  io.in(roomId).socketsLeave(roomId)
+
+  cancelDeletionTimer(roomId)
+  cleanupRoomData(roomId)
+
+  logger.info(`Room ${roomId} was dissolved`, { roomId })
+  broadcastRoomList(io)
 }
 
 // ---------------------------------------------------------------------------

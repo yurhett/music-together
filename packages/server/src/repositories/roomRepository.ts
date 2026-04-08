@@ -83,6 +83,18 @@ export class InMemoryRoomRepository implements RoomRepository {
     this.socketRTT.delete(socketId)
   }
 
+  deleteSocketMappingsForRoom(roomId: string): void {
+    const sockets = this.roomToSockets.get(roomId)
+    if (!sockets) return
+
+    for (const socketId of sockets) {
+      this.socketToRoom.delete(socketId)
+      this.socketRTT.delete(socketId)
+    }
+
+    this.roomToSockets.delete(roomId)
+  }
+
   hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean {
     const sockets = this.roomToSockets.get(roomId)
     if (!sockets) return false

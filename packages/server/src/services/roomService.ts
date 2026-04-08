@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import type { AudioQuality, RoomListItem, User } from '@music-together/shared'
+import type { AudioQuality, RoomListItem, RoomMode, User } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -7,7 +7,7 @@ import { chatRepo } from '../repositories/chatRepository.js'
 import { scheduleDeletion, cancelDeletionTimer } from './roomLifecycleService.js'
 import { consumeRejoinTicket } from './rejoinTicketService.js'
 import { estimateCurrentTime } from './syncService.js'
-import { updateVoteThreshold } from './voteService.js'
+import { cancelVote, updateVoteThreshold } from './voteService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
 
@@ -55,6 +55,7 @@ export function createRoom(
   roomName?: string,
   password?: string | null,
   persistentUserId?: string,
+  roomMode: RoomMode = 'normal',
 ): { room: RoomData; user: User } {
   const roomId = nanoid(6).toUpperCase()
   const userId = persistentUserId || socketId
@@ -68,6 +69,7 @@ export function createRoom(
     creatorId: userId,
     hostId: userId,
     adminUserIds: new Set(),
+    roomMode,
     audioQuality: 320,
     users: [user],
     queue: [],
@@ -167,7 +169,13 @@ export function leaveRoom(
 
   // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
-    scheduleDeletion(roomId, io)
+    // Empty room should never keep a pending vote alive.
+    cancelVote(roomId)
+
+    if (room.roomMode === 'normal') {
+      scheduleDeletion(roomId, io)
+    }
+
     return { roomId, user, room, hostChanged: false, voteUpdated: false }
   }
 
@@ -212,6 +220,13 @@ export function updateSettings(
   if (settings.audioQuality !== undefined) {
     room.audioQuality = settings.audioQuality
   }
+}
+
+export function setRoomMode(roomId: string, roomMode: RoomMode): boolean {
+  const room = roomRepo.get(roomId)
+  if (!room) return false
+  room.roomMode = roomMode
+  return true
 }
 
 export function setUserRole(roomId: string, targetUserId: string, role: 'admin' | 'member'): boolean {
