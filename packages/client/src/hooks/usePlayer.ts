@@ -34,7 +34,8 @@ export function usePlayer() {
   const autoNext = useCallback(() => {
     const { room } = useRoomStore.getState()
     const myId = storage.getUserId()
-    if (room?.hostId === myId) {
+    // 电台模式下：由服务端 radioConductor 自动切歌，不发送 PLAYER_NEXT
+    if (!room?.radioMode && room?.hostId === myId) {
       socket.emit(EVENTS.PLAYER_NEXT)
     }
   }, [socket])

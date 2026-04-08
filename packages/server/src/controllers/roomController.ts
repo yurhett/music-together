@@ -40,18 +40,26 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { nickname, roomName, password } = parsed.data
+      const { nickname, roomName, password, radioMode } = parsed.data
 
       // Auto-leave any previous room before creating a new one
       handleLeave(io, socket, 'auto-leave before create', true)
 
-      const { room, user } = roomService.createRoom(
+      const result = roomService.createRoom(
         socket.id,
         nickname.trim(),
         roomName,
         password,
         socket.data.identityUserId,
+        radioMode,
       )
+
+      if ('error' in result) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: result.error })
+        return
+      }
+
+      const { room, user } = result
 
       socket.leave('lobby')
       socket.join(room.id)
@@ -64,8 +72,14 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       // 广播房间列表给大厅用户
       roomService.broadcastRoomList(io)
     } catch (err) {
-      logger.error('ROOM_CREATE handler error', err, { socketId: socket.id })
-      socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '服务器内部错误' })
+      if (err instanceof Error && err.name === 'ZodError') {
+         // handled by safeParse
+      } else if (err && typeof err === 'object' && 'code' in err && err.code === 'RADIO_LIMIT_REACHED') {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: (err as any).error })
+      } else {
+        logger.error('ROOM_CREATE handler error', err, { socketId: socket.id })
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '服务器内部错误' })
+      }
     }
   })
 
@@ -181,10 +195,11 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      roomService.updateSettings(ctx.roomId, {
+      roomService.updateSettings(io, ctx.roomId, {
         name: parsed.data.name,
         password: parsed.data.password,
         audioQuality: parsed.data.audioQuality,
+        radioMode: parsed.data.radioMode,
       })
 
       const updatedRoom = roomRepo.get(ctx.roomId)
@@ -195,6 +210,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
         audioQuality: updatedRoom.audioQuality,
+        radioMode: updatedRoom.radioMode,
       }
       // 给 owner 发送含密码的设置
       ctx.socket.emit(EVENTS.ROOM_SETTINGS, {
@@ -233,6 +249,36 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       io.to(ctx.roomId).emit(EVENTS.ROOM_ROLE_CHANGED, { userId, role })
       logger.info(`Role changed: ${userId} -> ${role} in room ${ctx.roomId}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  // ---- Dissolve room (仅房主) ----
+  socket.on(
+    EVENTS.ROOM_DISSOLVE,
+    withOwnerOnly((ctx) => {
+      const dissolved = roomService.dissolveRoom(ctx.roomId)
+      if (!dissolved) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '无法解散房间' })
+        return
+      }
+
+      // 通知房间内所有人房间已解散
+      io.to(ctx.roomId).emit(EVENTS.ROOM_DISSOLVED, { roomId: ctx.roomId, reason: '房主已解散该房间' })
+
+      // 强制让所有 socket 离开房间 join lobby
+      for (const user of dissolved.users) {
+        const socketId = roomRepo.getSocketIdForUser(ctx.roomId, user.id)
+        if (socketId) {
+          const s = io.sockets.sockets.get(socketId)
+          if (s) {
+            s.leave(ctx.roomId)
+            s.join('lobby')
+          }
+        }
+      }
+
+      // 更新大厅和清理
+      roomService.broadcastRoomList(io)
     }),
   )
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Lock, Music, Loader2 } from 'lucide-react'
+import { Lock, Music, Loader2, Radio } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import {
   ResponsiveDialog,
@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string) => void
+  onCreateRoom: (nickname: string, roomName?: string, password?: string, radioMode?: boolean) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -32,6 +32,7 @@ export function CreateRoomDialog({
   const [roomName, setRoomName] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
+  const [radioMode, setRadioMode] = useState(false)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
@@ -49,6 +50,7 @@ export function CreateRoomDialog({
       nickname.trim(),
       roomName.trim() || undefined,
       passwordEnabled && password.trim() ? password.trim() : undefined,
+      radioMode,
     )
   }
 
@@ -106,6 +108,24 @@ export function CreateRoomDialog({
                   maxLength={LIMITS.ROOM_PASSWORD_MAX_LENGTH}
                   autoFocus
                 />
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Switch id="radio-toggle" checked={radioMode} onCheckedChange={setRadioMode} />
+                <Label
+                  htmlFor="radio-toggle"
+                  className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground"
+                >
+                  <Radio className="h-3.5 w-3.5" />
+                  电台模式
+                </Label>
+              </div>
+              {radioMode && (
+                <p className="text-xs text-muted-foreground pl-11">
+                  该房间将永久保留（直至房主解散），无人时也会自动播放。
+                </p>
               )}
             </div>
 

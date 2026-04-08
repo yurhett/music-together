@@ -89,6 +89,16 @@ export function useRoomState() {
       }
     }
 
+    const onDissolved = (data: { roomId: string; reason: string }) => {
+      // Clear persistence and redirect
+      if (useRoomStore.getState().room?.id === data.roomId) {
+        toast.info(data.reason || '房间已被解散')
+        storage.clearRejoinToken(data.roomId)
+        useRoomStore.getState().reset()
+        navigateRef.current('/', { replace: true })
+      }
+    }
+
     socket.on(EVENTS.ROOM_STATE, onRoomState)
     socket.on(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
     socket.on(EVENTS.ROOM_USER_JOINED, onUserJoined)
@@ -96,6 +106,7 @@ export function useRoomState() {
     socket.on(EVENTS.ROOM_SETTINGS, onSettings)
     socket.on(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
     socket.on(EVENTS.ROOM_ERROR, onError)
+    socket.on(EVENTS.ROOM_DISSOLVED, onDissolved)
 
     // If room was already set before this hook mounted (e.g. HomePage consumed
     // ROOM_STATE and navigated here), resend cookies now. The ref guard prevents
@@ -113,6 +124,7 @@ export function useRoomState() {
       socket.off(EVENTS.ROOM_SETTINGS, onSettings)
       socket.off(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
       socket.off(EVENTS.ROOM_ERROR, onError)
+      socket.off(EVENTS.ROOM_DISSOLVED, onDissolved)
     }
   }, [socket])
 }

@@ -19,13 +19,15 @@ interface RoomHeaderProps {
   onOpenSettings: () => void
   onOpenMembers: () => void
   onLeaveRoom: () => void
+  onDissolveRoom: () => void
 }
 
-export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeaveRoom }: RoomHeaderProps) {
+export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeaveRoom, onDissolveRoom }: RoomHeaderProps) {
   // Fine-grained selectors to avoid re-renders from queue/playState changes
   const roomName = useRoomStore((s) => s.room?.name)
   const roomId = useRoomStore((s) => s.room?.id)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
+  const isOwner = useRoomStore((s) => s.currentUser?.role === 'owner')
   const { isConnected } = useSocketContext()
 
   // Poll RTT from clockSync module every 3s
@@ -168,6 +170,27 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
           <TooltipContent>离开房间</TooltipContent>
         </Tooltip>
 
+        {isOwner && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0"
+                onClick={() => {
+                  if (confirm('确定要解散该房间吗？此操作不可撤销，且所有用户将被强制离开。')) {
+                    onDissolveRoom()
+                  }
+                }}
+                aria-label="解散房间"
+              >
+                <LogOut className="h-4 w-4 text-destructive" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="text-destructive">解散房间</TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Mobile: dropdown menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -194,6 +217,19 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
               <LogOut className="mr-2 h-4 w-4" />
               离开房间
             </DropdownMenuItem>
+            {isOwner && (
+              <DropdownMenuItem
+                className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
+                onClick={() => {
+                  if (confirm('确定要解散该房间吗？此操作不可撤销，且所有用户将被强制离开。')) {
+                    onDissolveRoom()
+                  }
+                }}
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                解散房间
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

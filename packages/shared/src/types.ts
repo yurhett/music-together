@@ -63,6 +63,8 @@ export interface RoomState {
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode
+  /** 电台模式：服务端担任 conductor，房间空置时也不删除、自动走带 */
+  radioMode: boolean
 }
 
 export interface PlayState {
@@ -118,6 +120,8 @@ export interface RoomListItem {
   userCount: number
   currentTrackTitle: string | null
   currentTrackArtist: string | null
+  /** 电台模式标识（用于大厅徽章展示） */
+  radioMode: boolean
 }
 
 /** 平台认证状态（前端展示用，不含 cookie 明文） */

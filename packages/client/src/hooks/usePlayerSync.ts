@@ -267,7 +267,8 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
     const report = () => {
       const { room } = useRoomStore.getState()
       const myId = storage.getUserId()
-      if (room?.hostId === myId && howlRef.current?.playing()) {
+      // 电台模式下：服务端充当 conductor，不进行客户端打点报告
+      if (!room?.radioMode && room?.hostId === myId && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
           hostServerTime: getServerTime(),
@@ -286,9 +287,10 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
       if (document.visibilityState !== 'visible') return
 
       // 1. conductor 报告：让服务端立即刷新 playState（已有逻辑，保留）
+      // 电台模式下也不需要
       const { room: r } = useRoomStore.getState()
       const myId = storage.getUserId()
-      if (r?.hostId === myId && howlRef.current?.playing()) {
+      if (!r?.radioMode && r?.hostId === myId && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
           hostServerTime: getServerTime(),
