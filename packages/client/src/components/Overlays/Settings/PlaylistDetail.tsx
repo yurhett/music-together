@@ -1,8 +1,10 @@
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
+import { getVipTrackBlockedReason, isVipTrackBlocked } from '@/lib/platform'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
+import { useAuthStatusStore } from '@/stores/authStatusStore'
 import type { Playlist, Track } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { ArrowLeft, ListPlus, Music } from 'lucide-react'
@@ -37,8 +39,20 @@ export function PlaylistDetail({
   onLoadMore,
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
+  const platformStatus = useAuthStatusStore((s) => s.platformStatus)
+  const statusLoaded = useAuthStatusStore((s) => s.statusLoaded)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+
+  const isTrackAddDisabled = useCallback(
+    (track: Track) => isVipTrackBlocked(track, platformStatus, statusLoaded),
+    [platformStatus, statusLoaded],
+  )
+
+  const getTrackAddDisabledReason = useCallback(
+    (track: Track) => getVipTrackBlockedReason(track, platformStatus, statusLoaded),
+    [platformStatus, statusLoaded],
+  )
 
   const isTrackAdded = useCallback(
     (track: Track) => {
@@ -55,34 +69,53 @@ export function PlaylistDetail({
         toast.info(`「${track.title}」已在队列中`)
         return
       }
+
+      const blockedReason = getTrackAddDisabledReason(track)
+      if (blockedReason) {
+        toast.error(`「${track.title}」是 VIP 歌曲，${blockedReason}`)
+        return
+      }
+
       onAddTrack(track)
       setAddedIds((prev) => new Set(prev).add(key))
       toast.success(`已添加「${track.title}」`)
     },
-    [onAddTrack, queueKeys, addedIds],
+    [onAddTrack, queueKeys, addedIds, getTrackAddDisabledReason],
   )
 
   // Dynamic "add all" logic — filter duplicates
   const availableSlots = LIMITS.QUEUE_MAX_SIZE - queue.length
   const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
-  const addCount = Math.min(availableSlots, uniqueTracks.length)
+  const blockedVipCount = useMemo(
+    () => uniqueTracks.filter((track) => isTrackAddDisabled(track)).length,
+    [uniqueTracks, isTrackAddDisabled],
+  )
+  const addableTracks = useMemo(
+    () => uniqueTracks.filter((track) => !isTrackAddDisabled(track)),
+    [uniqueTracks, isTrackAddDisabled],
+  )
+  const addCount = Math.min(availableSlots, addableTracks.length)
   const isQueueFull = availableSlots <= 0
 
   const handleAddAll = useCallback(() => {
     if (addCount <= 0) return
-    const toAdd = uniqueTracks.slice(0, addCount)
+    const toAdd = addableTracks.slice(0, addCount)
     onAddAll(toAdd, playlist?.name)
     setAddedIds((prev) => {
       const next = new Set(prev)
       for (const t of toAdd) next.add(trackKey(t))
       return next
     })
-    if (addCount < uniqueTracks.length) {
-      toast.success(`已添加 ${addCount} 首到队列（队列已满，还有 ${uniqueTracks.length - addCount} 首未添加）`)
+    const skippedByQueueLimit = Math.max(0, addableTracks.length - addCount)
+    if (blockedVipCount > 0 || skippedByQueueLimit > 0) {
+      const summary: string[] = []
+      if (blockedVipCount > 0) summary.push(`跳过 ${blockedVipCount} 首 VIP 歌曲`)
+      if (skippedByQueueLimit > 0) summary.push(`队列已满未添加 ${skippedByQueueLimit} 首`)
+      toast.success(`已添加 ${addCount} 首到队列（${summary.join('，')}）`)
     } else {
       toast.success(`已添加全部 ${addCount} 首到队列`)
     }
-  }, [addCount, uniqueTracks, onAddAll, playlist?.name])
+  }, [addCount, addableTracks, onAddAll, playlist?.name, blockedVipCount])
 
   // Button label
   let addAllLabel: string
@@ -92,9 +125,11 @@ export function PlaylistDetail({
     addAllLabel = '添加全部'
   } else if (isQueueFull) {
     addAllLabel = '队列已满'
+  } else if (addableTracks.length === 0 && blockedVipCount > 0) {
+    addAllLabel = '需平台 VIP'
   } else if (uniqueTracks.length === 0) {
     addAllLabel = '全部已添加'
-  } else if (addCount === uniqueTracks.length) {
+  } else if (addCount === addableTracks.length) {
     addAllLabel = `添加全部 ${addCount} 首`
   } else {
     addAllLabel = `添加 ${addCount} 首到队列`
@@ -121,13 +156,17 @@ export function PlaylistDetail({
           variant="outline"
           size="sm"
           onClick={handleAddAll}
-          disabled={loading || isQueueFull || uniqueTracks.length === 0}
+          disabled={loading || isQueueFull || addableTracks.length === 0}
           className="shrink-0 gap-1"
         >
           <ListPlus className="h-3.5 w-3.5" />
           {addAllLabel}
         </Button>
       </div>
+
+      {statusLoaded && blockedVipCount > 0 && (
+        <p className="pb-1 text-[11px] text-amber-600">当前房间暂无对应平台 VIP，{blockedVipCount} 首 VIP 歌曲不可添加</p>
+      )}
 
       <Separator className="shrink-0" />
 
@@ -139,6 +178,8 @@ export function PlaylistDetail({
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
         isTrackAdded={isTrackAdded}
+        isTrackAddDisabled={isTrackAddDisabled}
+        getTrackAddDisabledReason={getTrackAddDisabledReason}
         onAddTrack={handleAddTrack}
         emptyIcon={<Music className="h-8 w-8" />}
         emptyMessage="歌单为空"

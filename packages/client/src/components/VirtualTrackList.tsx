@@ -16,6 +16,8 @@ export interface VirtualTrackListProps {
   loadingMore: boolean
   onLoadMore: () => void
   isTrackAdded: (track: Track) => boolean
+  isTrackAddDisabled?: (track: Track) => boolean
+  getTrackAddDisabledReason?: (track: Track) => string | null | undefined
   onAddTrack: (track: Track) => void
   onArtistClick?: (artist: string) => void
   emptyIcon?: React.ReactNode
@@ -51,6 +53,8 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
     loadingMore,
     onLoadMore,
     isTrackAdded,
+    isTrackAddDisabled,
+    getTrackAddDisabledReason,
     onAddTrack,
     onArtistClick,
     emptyIcon,
@@ -147,6 +151,8 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
           }
 
           const track = tracks[virtualRow.index]
+          const addDisabled = isTrackAddDisabled?.(track) ?? false
+          const addDisabledReason = getTrackAddDisabledReason?.(track)
 
           return (
             <TrackListItem
@@ -154,6 +160,8 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
               track={track}
               index={virtualRow.index}
               isAdded={isTrackAdded(track)}
+              isAddDisabled={addDisabled}
+              addDisabledReason={addDisabledReason}
               onAdd={onAddTrack}
               onArtistClick={onArtistClick}
               style={{

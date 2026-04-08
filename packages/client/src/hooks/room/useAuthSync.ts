@@ -1,8 +1,9 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
+import { useAuthStatusStore } from '@/stores/authStatusStore'
 import { storage } from '@/lib/storage'
 import { EVENTS } from '@music-together/shared'
-import type { MusicSource } from '@music-together/shared'
+import type { MusicSource, PlatformAuthStatus } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
@@ -31,6 +32,10 @@ export function useAuthSync() {
   const pendingAutoResendRef = useRef(0)
 
   useEffect(() => {
+    const onStatusUpdate = (data: PlatformAuthStatus[]) => {
+      useAuthStatusStore.getState().setPlatformStatus(data)
+    }
+
     const onAuthCookieResult = (data: {
       success: boolean
       message: string
@@ -75,10 +80,14 @@ export function useAuthSync() {
     const onRoomState = () => {
       const stored = storage.getAuthCookies()
       pendingAutoResendRef.current = stored.length
+      socket.emit(EVENTS.AUTH_GET_STATUS)
     }
 
+    socket.on(EVENTS.AUTH_STATUS_UPDATE, onStatusUpdate)
     socket.on(EVENTS.AUTH_SET_COOKIE_RESULT, onAuthCookieResult)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+
+    socket.emit(EVENTS.AUTH_GET_STATUS)
 
     // 如果组件挂载时已在房间中（如路由切换），也要初始化计数
     if (useRoomStore.getState().room) {
@@ -87,6 +96,7 @@ export function useAuthSync() {
     }
 
     return () => {
+      socket.off(EVENTS.AUTH_STATUS_UPDATE, onStatusUpdate)
       socket.off(EVENTS.AUTH_SET_COOKIE_RESULT, onAuthCookieResult)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
     }

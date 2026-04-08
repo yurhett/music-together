@@ -1,6 +1,7 @@
 import {
   EVENTS,
   ERROR_CODE,
+  type MusicSource,
   queueAddSchema,
   queueAddBatchSchema,
   queueRemoveSchema,
@@ -11,9 +12,16 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
+import * as authService from '../services/authService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
 import { logger } from '../utils/logger.js'
+
+const PLATFORM_NAME: Record<MusicSource, string> = {
+  netease: '网易云',
+  tencent: 'QQ 音乐',
+  kugou: '酷狗',
+}
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
@@ -28,6 +36,14 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         return
       }
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+
+      if (track.vip && !authService.hasVipForPlatform(ctx.roomId, track.source)) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.VIP_REQUIRED,
+          message: `「${track.title}」是 VIP 歌曲，当前房间暂无 ${PLATFORM_NAME[track.source]} VIP 账号，无法添加`,
+        })
+        return
+      }
 
       const added = queueService.addTrack(ctx.roomId, track)
       if (!added) {
@@ -62,7 +78,18 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const { tracks: rawTracks, playlistName } = parsed.data
       const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
 
-      const addedCount = queueService.addBatchTracks(ctx.roomId, tracks)
+      const blockedVipTracks = tracks.filter((track) => track.vip && !authService.hasVipForPlatform(ctx.roomId, track.source))
+      const allowedTracks = tracks.filter((track) => !track.vip || authService.hasVipForPlatform(ctx.roomId, track.source))
+
+      if (allowedTracks.length === 0 && blockedVipTracks.length > 0) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.VIP_REQUIRED,
+          message: `导入失败：共 ${blockedVipTracks.length} 首 VIP 歌曲，当前房间暂无对应平台 VIP 账号`,
+        })
+        return
+      }
+
+      const addedCount = queueService.addBatchTracks(ctx.roomId, allowedTracks)
       if (addedCount === 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
@@ -70,15 +97,25 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
 
       const label = playlistName ? `歌单「${playlistName}」` : '歌单'
+      const vipSkippedCount = blockedVipTracks.length
+      const importSummary =
+        vipSkippedCount > 0 ? `${ctx.user.nickname} 从${label}导入了 ${addedCount} 首歌，跳过 ${vipSkippedCount} 首 VIP 歌曲` : `${ctx.user.nickname} 从${label}导入了 ${addedCount} 首歌`
       const msg = chatService.createSystemMessage(
         ctx.roomId,
-        `${ctx.user.nickname} 从${label}导入了 ${addedCount} 首歌`,
+        importSummary,
       )
       io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
 
+      if (vipSkippedCount > 0) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.VIP_REQUIRED,
+          message: `已跳过 ${vipSkippedCount} 首 VIP 歌曲：当前房间暂无对应平台 VIP 账号`,
+        })
+      }
+
       // Auto-play first added track if nothing is playing
       if (addedCount > 0) {
-        await playerService.autoPlayIfEmpty(io, ctx.roomId, tracks[0])
+        await playerService.autoPlayIfEmpty(io, ctx.roomId, allowedTracks[0])
       }
 
       logger.info(`Batch added ${addedCount} tracks from playlist`, { roomId: ctx.roomId })

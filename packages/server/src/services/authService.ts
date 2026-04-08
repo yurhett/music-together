@@ -152,6 +152,15 @@ export function getAllPlatformStatus(roomId: string): PlatformAuthStatus[] {
   })
 }
 
+/** Whether a room currently has at least one VIP account for the given platform. */
+export function hasVipForPlatform(roomId: string, platform: MusicSource): boolean {
+  const pool = roomCookiePool.get(roomId)
+  if (!pool) return false
+  const entries = pool.get(platform)
+  if (!entries || entries.length === 0) return false
+  return entries.some((e) => e.vipType > 0)
+}
+
 /**
  * Get a specific user's auth status across all platforms in a specific room.
  */

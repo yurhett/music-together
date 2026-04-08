@@ -9,9 +9,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
-import { PLATFORM_COLORS } from '@/lib/platform'
+import { PLATFORM_COLORS, getVipTrackBlockedReason, hasRoomVipForPlatform, isVipTrackBlocked } from '@/lib/platform'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
+import { useAuthStatusStore } from '@/stores/authStatusStore'
 import { useSearch } from '@/hooks/useSearch'
 import type { MusicSource, Track } from '@music-together/shared'
 import { Loader2, Music2, Search } from 'lucide-react'
@@ -38,9 +39,25 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const listRef = useRef<VirtualTrackListRef>(null)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
-  const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
-
+  const platformStatus = useAuthStatusStore((s) => s.platformStatus)
+  const statusLoaded = useAuthStatusStore((s) => s.statusLoaded)
   const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source)
+  const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+  const sourceHasVip = useMemo(() => hasRoomVipForPlatform(source, platformStatus), [source, platformStatus])
+  const blockedVipCount = useMemo(
+    () => results.filter((track) => isVipTrackBlocked(track, platformStatus, statusLoaded)).length,
+    [results, platformStatus, statusLoaded],
+  )
+
+  const isTrackAddDisabled = useCallback(
+    (track: Track) => isVipTrackBlocked(track, platformStatus, statusLoaded),
+    [platformStatus, statusLoaded],
+  )
+
+  const getTrackAddDisabledReason = useCallback(
+    (track: Track) => getVipTrackBlockedReason(track, platformStatus, statusLoaded),
+    [platformStatus, statusLoaded],
+  )
 
   const handleSearch = (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
@@ -58,11 +75,18 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
         toast.info(`「${track.title}」已在队列中`)
         return
       }
+
+      const blockedReason = getTrackAddDisabledReason(track)
+      if (blockedReason) {
+        toast.error(`「${track.title}」是 VIP 歌曲，${blockedReason}`)
+        return
+      }
+
       onAddToQueue(track)
       setAddedIds((prev) => new Set(prev).add(key))
       toast.success(`已添加「${track.title}」`)
     },
-    [onAddToQueue, queueKeys, addedIds],
+    [onAddToQueue, queueKeys, addedIds, getTrackAddDisabledReason],
   )
 
   const isTrackAdded = useCallback(
@@ -115,6 +139,13 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
             </Button>
           </div>
 
+          {statusLoaded && !sourceHasVip && (
+            <p className="text-xs text-amber-600">当前房间暂无此平台 VIP 账号，VIP 歌曲将不可添加</p>
+          )}
+          {statusLoaded && hasSearched && blockedVipCount > 0 && (
+            <p className="text-xs text-amber-600">本次结果中有 {blockedVipCount} 首 VIP 歌曲不可添加</p>
+          )}
+
           {/* Results area — virtual scrolling with auto-load */}
           {hasSearched ? (
             <VirtualTrackList
@@ -125,6 +156,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
               loadingMore={loadingMore}
               onLoadMore={loadMore}
               isTrackAdded={isTrackAdded}
+              isTrackAddDisabled={isTrackAddDisabled}
+              getTrackAddDisabledReason={getTrackAddDisabledReason}
               onAddTrack={handleAdd}
               onArtistClick={handleSearch}
               emptyIcon={<Music2 className="h-8 w-8" />}

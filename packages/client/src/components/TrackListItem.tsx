@@ -3,13 +3,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
-import { Check, Music2, Plus } from 'lucide-react'
+import { Check, Lock, Music2, Plus } from 'lucide-react'
 import { memo } from 'react'
 
 export interface TrackListItemProps {
   track: Track
   index: number
   isAdded: boolean
+  isAddDisabled?: boolean
+  addDisabledReason?: string | null
   onAdd: (track: Track) => void
   onArtistClick?: (artist: string) => void
   style?: React.CSSProperties
@@ -20,15 +22,24 @@ export const TrackListItem = memo(function TrackListItem({
   track,
   index,
   isAdded,
+  isAddDisabled = false,
+  addDisabledReason,
   onAdd,
   onArtistClick,
   style,
   className,
 }: TrackListItemProps) {
+  const disabled = isAdded || isAddDisabled
+  const tooltipText = isAdded ? '已添加' : isAddDisabled ? addDisabledReason || '当前不可添加' : '添加到播放列表'
+
   return (
     <div
       style={style}
-      className={cn('group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50', className)}
+      className={cn(
+        'group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50',
+        isAddDisabled && !isAdded && 'bg-muted/20',
+        className,
+      )}
     >
       {/* Index */}
       <span className="w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</span>
@@ -81,17 +92,27 @@ export const TrackListItem = memo(function TrackListItem({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant={isAdded ? 'ghost' : 'outline'}
+            variant={isAdded || isAddDisabled ? 'ghost' : 'outline'}
             size="icon"
-            className={cn('h-8 w-8 shrink-0', isAdded && 'text-emerald-500 hover:text-emerald-500')}
-            disabled={isAdded}
+            className={cn(
+              'h-8 w-8 shrink-0',
+              isAdded && 'text-emerald-500 hover:text-emerald-500',
+              isAddDisabled && !isAdded && 'text-amber-500 hover:text-amber-500',
+            )}
+            disabled={disabled}
             onClick={() => onAdd(track)}
-            aria-label={isAdded ? '已添加' : `添加 ${track.title} 到播放列表`}
+            aria-label={
+              isAdded
+                ? '已添加'
+                : isAddDisabled
+                  ? `${track.title} 当前不可添加`
+                  : `添加 ${track.title} 到播放列表`
+            }
           >
-            {isAdded ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {isAdded ? <Check className="h-4 w-4" /> : isAddDisabled ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>
+        <TooltipContent>{tooltipText}</TooltipContent>
       </Tooltip>
     </div>
   )

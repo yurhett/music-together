@@ -243,16 +243,25 @@ export function usePlayerSync(howlRef: RefObject<any>, soundIdRef: RefObject<num
 
   // -----------------------------------------------------------------------
   // Periodic sync request (client-initiated drift correction).
-  // Host skips: it is the authoritative source and reports its own position.
+  // - Normal mode: host skips (host is the source of truth).
+  // - Radio mode: everyone, including host, follows server timeline.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    const interval = setInterval(() => {
-      const { room: r2 } = useRoomStore.getState()
+    const requestSync = () => {
+      const { room } = useRoomStore.getState()
+      if (!room) return
+
       const myId = storage.getUserId()
-      if (r2?.hostId !== myId) {
+      const isHost = room.hostId === myId
+      if (!isHost || room.roomMode === 'radio') {
         socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
       }
-    }, SYNC_REQUEST_INTERVAL_MS)
+    }
+
+    // Prime one request on mount/reconnect so syncDrift appears quickly.
+    requestSync()
+
+    const interval = setInterval(requestSync, SYNC_REQUEST_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [socket])
 

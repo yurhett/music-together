@@ -1,4 +1,4 @@
-import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-together/shared'
+import type { MusicSource, MyPlatformAuth, PlatformAuthStatus, Track } from '@music-together/shared'
 
 /** Full platform display names (used in dialogs, titles, descriptions) */
 export const PLATFORM_LABELS: Record<MusicSource, string> = {
@@ -40,4 +40,29 @@ export function getPlatformStatus(
 /** Find the current user's auth status for a platform */
 export function getMyPlatformStatus(platform: MusicSource, myStatusList: MyPlatformAuth[]): MyPlatformAuth | undefined {
   return myStatusList.find((s) => s.platform === platform)
+}
+
+/** Whether a room currently has a VIP account available for the platform. */
+export function hasRoomVipForPlatform(platform: MusicSource, statusList: PlatformAuthStatus[]): boolean {
+  return getPlatformStatus(platform, statusList)?.hasVip ?? false
+}
+
+/** A VIP track can only be added when room auth status has loaded and platform VIP is available. */
+export function isVipTrackBlocked(
+  track: Pick<Track, 'vip' | 'source'>,
+  statusList: PlatformAuthStatus[],
+  statusLoaded: boolean,
+): boolean {
+  if (!track.vip || !statusLoaded) return false
+  return !hasRoomVipForPlatform(track.source, statusList)
+}
+
+/** User-facing reason for disabled add action. */
+export function getVipTrackBlockedReason(
+  track: Pick<Track, 'vip' | 'source'>,
+  statusList: PlatformAuthStatus[],
+  statusLoaded: boolean,
+): string | null {
+  if (!isVipTrackBlocked(track, statusList, statusLoaded)) return null
+  return `当前房间暂无 ${PLATFORM_LABELS[track.source]} VIP 账号`
 }
