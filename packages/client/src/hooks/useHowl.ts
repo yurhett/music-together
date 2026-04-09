@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
 import { globalAudio, SILENT_WAV_BASE64 } from '@/lib/audioUnlock'
+import { installKeepAliveDebugHelpers, recordKeepAliveDebug } from '@/lib/audioKeepAliveDebug'
 import {
   CURRENT_TIME_THROTTLE_MS,
   HOWL_UNMUTE_DELAY_SEEK_MS,
@@ -17,6 +18,49 @@ const PLAY_ERROR_TIMEOUT_MS = 3000
 /** If playback reports playing() but currentTime doesn't advance for this
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
 const STALLED_TIMEOUT_MS = 8000
+const GLOBAL_AUDIO_TEARDOWN_DELAY_MS = 1500
+const HIDDEN_STREAM_LOAD_WATCHDOG_MS = 4000
+
+let activeHowlHookCount = 0
+let globalAudioTeardownTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearGlobalAudioTeardownTimer(reason?: string): void {
+  if (!globalAudioTeardownTimer) return
+  clearTimeout(globalAudioTeardownTimer)
+  globalAudioTeardownTimer = null
+  recordKeepAliveDebug('howl:cleanup-timer-cleared', globalAudio, {
+    reason: reason ?? 'unknown',
+  })
+}
+
+function shouldPreserveKeepAliveDuringUnmount(): boolean {
+  const isSilentKeepAlive = globalAudio.src.startsWith('data:audio/wav')
+  if (!isSilentKeepAlive) return false
+  if (!document.hidden) return false
+
+  const { mediaSessionLoading } = usePlayerStore.getState()
+  return globalAudio.loop || !globalAudio.paused || mediaSessionLoading
+}
+
+function teardownGlobalAudioElement(): void {
+  globalAudio.pause()
+  globalAudio.removeAttribute('src')
+  globalAudio.load()
+}
+
+function isStandaloneMode(): boolean {
+  const nav = navigator as Navigator & { standalone?: boolean }
+  return Boolean(nav.standalone) || Boolean(window.matchMedia?.('(display-mode: standalone)').matches)
+}
+
+function isRealStreamUrl(url?: string): boolean {
+  if (!url) return false
+  return !url.startsWith('data:audio/wav')
+}
+
+function shouldDeferTrackLoadToForeground(track: Track, autoPlay: boolean): boolean {
+  return autoPlay && document.hidden && isStandaloneMode() && isRealStreamUrl(track.streamUrl)
+}
 
 type RecoverPlaybackErrorContext = {
   currentTime: number
@@ -30,6 +74,15 @@ type RecoverPlaybackErrorResult = {
 }
 
 type RecoverPlaybackErrorFn = (ctx: RecoverPlaybackErrorContext) => Promise<RecoverPlaybackErrorResult>
+
+type PendingForegroundLoad = {
+  track: Track
+  seekTo?: number
+  autoPlay: boolean
+  queuedAt: number
+}
+
+type LoadTrackFn = (track: Track, seekTo?: number, autoPlay?: boolean) => void
 
 // Adapter interface so consumers (like usePlayerSync) get what they expect.
 export class NativeAudioAdapter {
@@ -89,12 +142,159 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
   const retryRef = useRef(false)
   const recoveringRef = useRef(false)
   const visibilityCleanupRef = useRef<(() => void) | null>(null)
+  const hiddenLoadWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingForegroundLoadRef = useRef<PendingForegroundLoad | null>(null)
+  const loadTrackRef = useRef<LoadTrackFn | null>(null)
 
   const volume = usePlayerStore((s) => s.volume)
 
   if (!howlRef.current) {
     howlRef.current = new NativeAudioAdapter()
   }
+
+  const clearHiddenLoadWatchdog = useCallback((reason: string) => {
+    if (!hiddenLoadWatchdogRef.current) return
+    clearTimeout(hiddenLoadWatchdogRef.current)
+    hiddenLoadWatchdogRef.current = null
+    recordKeepAliveDebug('track:hidden-load-watchdog-cleared', globalAudio, { reason })
+  }, [])
+
+  const startSilentKeepAlive = useCallback((reason: string) => {
+    usePlayerStore.getState().setMediaSessionLoading(true)
+
+    const title = trackTitleRef.current
+    recordKeepAliveDebug('keepalive:start', globalAudio, {
+      title,
+      reason,
+    })
+
+    if (!globalAudio.src.startsWith('data:audio/wav')) {
+      globalAudio.src = SILENT_WAV_BASE64
+    }
+    globalAudio.loop = true
+    // Keep tiny non-zero volume to avoid aggressive background suspension.
+    globalAudio.volume = Math.max(0.01, usePlayerStore.getState().volume)
+
+    globalAudio.play().then(() => {
+      recordKeepAliveDebug('keepalive:play-ok', globalAudio, {
+        title,
+        reason,
+      })
+    }).catch((e) => {
+      recordKeepAliveDebug('keepalive:play-failed', globalAudio, {
+        title,
+        reason,
+        error: String(e),
+      })
+    })
+  }, [])
+
+  useEffect(() => {
+    const flushDeferredLoadIfNeeded = (trigger: string) => {
+      if (document.visibilityState !== 'visible') return
+      const pending = pendingForegroundLoadRef.current
+      if (!pending) return
+
+      pendingForegroundLoadRef.current = null
+      recordKeepAliveDebug('track:flush-deferred-on-visible', globalAudio, {
+        trigger,
+        title: pending.track.title,
+        queuedForMs: Date.now() - pending.queuedAt,
+      })
+      clearHiddenLoadWatchdog('flush-deferred')
+      loadTrackRef.current?.(pending.track, pending.seekTo, pending.autoPlay)
+    }
+
+    const onVisibilityChange = () => {
+      flushDeferredLoadIfNeeded('visibilitychange')
+    }
+    const onPageShow = () => {
+      flushDeferredLoadIfNeeded('pageshow')
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pageshow', onPageShow)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pageshow', onPageShow)
+    }
+  }, [clearHiddenLoadWatchdog])
+
+  useEffect(() => {
+    activeHowlHookCount += 1
+    clearGlobalAudioTeardownTimer('remount')
+
+    return () => {
+      activeHowlHookCount = Math.max(0, activeHowlHookCount - 1)
+    }
+  }, [])
+
+  useEffect(() => {
+    installKeepAliveDebugHelpers()
+    recordKeepAliveDebug('howl:mount', globalAudio)
+
+    const onVisibilityChange = () => {
+      recordKeepAliveDebug('page:visibilitychange', globalAudio, {
+        visibilityState: document.visibilityState,
+      })
+    }
+    const onOnline = () => recordKeepAliveDebug('network:online', globalAudio)
+    const onOffline = () => recordKeepAliveDebug('network:offline', globalAudio)
+    const onPageHide = (e: PageTransitionEvent) => {
+      recordKeepAliveDebug('page:hide', globalAudio, { persisted: e.persisted })
+
+      const { mediaSessionLoading } = usePlayerStore.getState()
+      const isStreamSrc = Boolean(globalAudio.src) && !globalAudio.src.startsWith('data:audio/wav')
+      if (document.hidden && isStandaloneMode() && mediaSessionLoading && isStreamSrc) {
+        recordKeepAliveDebug('keepalive:pagehide-fallback', globalAudio)
+        startSilentKeepAlive('pagehide-loading-fallback')
+      }
+    }
+    const onPageShow = (e: PageTransitionEvent) => {
+      recordKeepAliveDebug('page:show', globalAudio, { persisted: e.persisted })
+    }
+
+    const audioEvents = [
+      'play',
+      'pause',
+      'ended',
+      'error',
+      'stalled',
+      'suspend',
+      'waiting',
+      'canplay',
+      'canplaythrough',
+      'emptied',
+    ] as const
+
+    const onAudioEvent = (event: Event) => {
+      const mediaError = globalAudio.error
+      recordKeepAliveDebug(`audio:${event.type}`, globalAudio, {
+        mediaErrorCode: mediaError?.code ?? null,
+      })
+    }
+
+    for (const name of audioEvents) {
+      globalAudio.addEventListener(name, onAudioEvent)
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onPageShow)
+
+    return () => {
+      recordKeepAliveDebug('howl:unmount', globalAudio)
+      for (const name of audioEvents) {
+        globalAudio.removeEventListener(name, onAudioEvent)
+      }
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onPageShow)
+    }
+  }, [startSilentKeepAlive])
 
   const startTimeUpdate = useCallback(() => {
     if (animFrameRef.current !== null) {
@@ -188,19 +388,13 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
 
     const handleEnded = () => {
       console.log('[Audio Debug] ✨ native "ended" event triggered!')
+      recordKeepAliveDebug('track:ended', globalAudio, {
+        title: trackTitleRef.current,
+      })
       // 以无声 WAV 循环播放，避免系统立马挂起 JS 导致无法拉取下一首歌
       if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
-        usePlayerStore.getState().setMediaSessionLoading(true)
         console.log('[Audio Debug] Track ended. Starting silent WAV keep-alive...')
-        globalAudio.src = SILENT_WAV_BASE64
-        globalAudio.loop = true
-        // 🚨 绝对不能设置为 0 或 muted, 否则 Chrome 等系统为了省电会立即停止“仅视频且无声”的后台媒体播放
-        globalAudio.volume = 1
-        globalAudio.play().then(() => {
-          console.log('[Audio Debug] Silent WAV is playing successfully (Tab speaker icon should remain on).')
-        }).catch((e) => {
-          console.warn('[Audio Debug] Silent WAV play failed:', e)
-        })
+        startSilentKeepAlive('track-ended')
       }
 
       usePlayerStore.getState().setIsPlaying(false)
@@ -210,9 +404,15 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
 
     const handleError = () => {
       console.error('[Audio Debug] handleError called:', globalAudio.error)
+      recordKeepAliveDebug('track:error', globalAudio, {
+        title: trackTitleRef.current,
+      })
       if (!retryRef.current && globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         retryRef.current = true
         console.warn('Audio load error, retrying:', globalAudio.error)
+        recordKeepAliveDebug('track:error-retry', globalAudio, {
+          title: trackTitleRef.current,
+        })
         globalAudio.load()
         globalAudio.play().catch(() => {})
         return
@@ -276,11 +476,42 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
       globalAudio.removeEventListener('ended', handleEnded)
       globalAudio.removeEventListener('error', handleError)
     }
-  }, [onRecoverPlaybackError, onTrackEnd, startTimeUpdate, stopTimeUpdate])
+  }, [onRecoverPlaybackError, onTrackEnd, startTimeUpdate, stopTimeUpdate, startSilentKeepAlive])
 
   const loadTrack = useCallback(
     (track: Track, seekTo?: number, autoPlay = true) => {
       console.log(`[Audio Debug] loadTrack called. new track: ${track.title}, autoPlay: ${autoPlay}, seekTo: ${seekTo}`)
+      recordKeepAliveDebug('track:load-start', globalAudio, {
+        title: track.title,
+        autoPlay,
+        seekTo: seekTo ?? null,
+      })
+
+      if (shouldDeferTrackLoadToForeground(track, autoPlay)) {
+        const prev = pendingForegroundLoadRef.current
+        if (prev && prev.track.id !== track.id) {
+          recordKeepAliveDebug('track:hidden-deferred-overwrite', globalAudio, {
+            previousTitle: prev.track.title,
+            nextTitle: track.title,
+          })
+        }
+
+        pendingForegroundLoadRef.current = {
+          track,
+          seekTo,
+          autoPlay,
+          queuedAt: Date.now(),
+        }
+        usePlayerStore.getState().setCurrentTrack(track)
+        usePlayerStore.getState().setMediaSessionLoading(true)
+        clearHiddenLoadWatchdog('hidden-defer')
+        recordKeepAliveDebug('track:hidden-deferred', globalAudio, {
+          title: track.title,
+          seekTo: seekTo ?? null,
+        })
+        startSilentKeepAlive('hidden-defer-track-load')
+        return
+      }
       
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
@@ -290,6 +521,7 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         clearTimeout(playErrorTimerRef.current)
         playErrorTimerRef.current = null
       }
+      clearHiddenLoadWatchdog('load-track-restart')
 
       stopTimeUpdate()
       syncReadyRef.current = false
@@ -301,6 +533,7 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
       usePlayerStore.getState().setMediaSessionLoading(true)
 
       if (!track.streamUrl) {
+        clearHiddenLoadWatchdog('no-stream-url')
         usePlayerStore.getState().setMediaSessionLoading(false)
         return
       }
@@ -315,10 +548,14 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
       globalAudio.playbackRate = 1
 
       const onCanPlay = () => {
+        clearHiddenLoadWatchdog('canplay')
         globalAudio.removeEventListener('canplay', onCanPlay)
         if (globalAudio.src !== track.streamUrl) return
 
         usePlayerStore.getState().setMediaSessionLoading(false)
+        recordKeepAliveDebug('track:canplay', globalAudio, {
+          title: track.title,
+        })
 
         const d = globalAudio.duration
         if (Number.isFinite(d) && d > 0) {
@@ -333,6 +570,9 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
           
           globalAudio.play().then(() => {
             if (globalAudio.src !== track.streamUrl) return
+            recordKeepAliveDebug('track:play-ok', globalAudio, {
+              title: track.title,
+            })
             
             const elapsed = (Date.now() - loadStartTime) / 1000
             const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
@@ -340,6 +580,11 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
               globalAudio.currentTime = seekTarget
             }
           }).catch(e => {
+            recordKeepAliveDebug('track:play-failed', globalAudio, {
+              title: track.title,
+              error: String(e),
+              hidden: document.hidden,
+            })
             if (document.hidden) return
             playErrorTimerRef.current = setTimeout(() => {
               if (document.hidden) {
@@ -375,21 +620,50 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
       globalAudio.addEventListener('canplay', onCanPlay)
       // 首先同步执行 load()
       globalAudio.load()
+      recordKeepAliveDebug('track:load-called', globalAudio, {
+        title: track.title,
+      })
+
+      if (autoPlay && document.hidden && isStandaloneMode()) {
+        hiddenLoadWatchdogRef.current = setTimeout(() => {
+          hiddenLoadWatchdogRef.current = null
+          const { mediaSessionLoading } = usePlayerStore.getState()
+          if (!mediaSessionLoading) return
+          if (globalAudio.src !== track.streamUrl) return
+
+          recordKeepAliveDebug('track:hidden-load-watchdog-triggered', globalAudio, {
+            title: track.title,
+            timeoutMs: HIDDEN_STREAM_LOAD_WATCHDOG_MS,
+          })
+          startSilentKeepAlive('hidden-load-watchdog')
+        }, HIDDEN_STREAM_LOAD_WATCHDOG_MS)
+      }
       
       // 在 load() 明确重置会话之后立刻 play(). 这向系统强宣我们占用媒体缓冲了
       if (autoPlay) {
         console.log('[Audio Debug] loadTrack autoPlay started for new URL.', track.streamUrl.substring(0, 30) + '...')
         globalAudio.play().then(() => {
           console.log('[Audio Debug] New track .play() success pending buffering.')
+          recordKeepAliveDebug('track:prime-play-ok', globalAudio, {
+            title: track.title,
+          })
         }).catch((e) => {
           console.error('[Audio Debug] New track .play() failed:', e)
+          recordKeepAliveDebug('track:prime-play-failed', globalAudio, {
+            title: track.title,
+            error: String(e),
+          })
         })
       }
       
       usePlayerStore.getState().setCurrentTrack(track)
     },
-    [onTrackEnd, stopTimeUpdate],
+    [clearHiddenLoadWatchdog, onTrackEnd, startSilentKeepAlive, stopTimeUpdate],
   )
+
+  useEffect(() => {
+    loadTrackRef.current = loadTrack
+  }, [loadTrack])
 
   useEffect(() => {
     if (syncReadyRef.current) {
@@ -399,6 +673,9 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
 
   useEffect(() => {
     return () => {
+      recordKeepAliveDebug('howl:cleanup', globalAudio, {
+        activeHowlHookCount,
+      })
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
         unmuteTimerRef.current = null
@@ -407,14 +684,35 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         clearTimeout(playErrorTimerRef.current)
         playErrorTimerRef.current = null
       }
+      clearHiddenLoadWatchdog('howl-cleanup')
+      pendingForegroundLoadRef.current = null
       recoveringRef.current = false
-      usePlayerStore.getState().setMediaSessionLoading(false)
       stopTimeUpdate()
-      globalAudio.pause()
-      globalAudio.removeAttribute('src')
-      globalAudio.load()
+
+      clearGlobalAudioTeardownTimer('cleanup-reschedule')
+      globalAudioTeardownTimer = setTimeout(() => {
+        globalAudioTeardownTimer = null
+        if (activeHowlHookCount > 0) {
+          recordKeepAliveDebug('howl:cleanup-cancelled-remount', globalAudio, {
+            activeHowlHookCount,
+          })
+          return
+        }
+
+        if (shouldPreserveKeepAliveDuringUnmount()) {
+          const nav = navigator as Navigator & { standalone?: boolean }
+          recordKeepAliveDebug('howl:cleanup-preserve-keepalive', globalAudio, {
+            standalone: Boolean(nav.standalone) || Boolean(window.matchMedia?.('(display-mode: standalone)').matches),
+          })
+          return
+        }
+
+        recordKeepAliveDebug('howl:cleanup-teardown-audio', globalAudio)
+        usePlayerStore.getState().setMediaSessionLoading(false)
+        teardownGlobalAudioElement()
+      }, GLOBAL_AUDIO_TEARDOWN_DELAY_MS)
     }
-  }, [stopTimeUpdate])
+  }, [clearHiddenLoadWatchdog, stopTimeUpdate])
 
   return { howlRef, soundIdRef, loadTrack }
 }

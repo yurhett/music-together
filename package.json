@@ -6,8 +6,8 @@
   "scripts": {
     "predev": "kill-port 3001 --silent || true",
     "dev": "concurrently --kill-others --names server,client --prefix-colors blue,green \"pnpm run dev:server\" \"pnpm run dev:client\"",
-    "dev:client": "pnpm --filter @music-together/client dev",
-    "dev:server": "pnpm --filter @music-together/server dev",
+    "dev:client": "pnpm --filter @music-together/client dev --host",
+    "dev:server": "pnpm --filter @music-together/server dev --host",
     "build": "pnpm -r run build",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\" \"packages/shared/src/**/*.ts\""
   },

@@ -153,14 +153,24 @@ export function usePlayer() {
       recoverIfLoading()
     }
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return
+      // Give ROOM_JOIN/ROOM_STATE a tiny window to settle after foreground resume.
+      setTimeout(() => {
+        recoverIfLoading()
+      }, 200)
+    }
+
     socket.on('connect', onConnect)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
     window.addEventListener('online', onOnline)
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       socket.off('connect', onConnect)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
       window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [socket])
 

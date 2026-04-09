@@ -244,6 +244,29 @@ export default function RoomPage() {
     }
   }, [attemptRoomJoin, clearJoinAttemptTimeout, gateOpen, isConnected, passwordNeeded, reconnectStopped, roomId, room, reconnecting, socket])
 
+  // iOS standalone may heavily throttle timers while hidden.
+  // Kick an immediate rejoin attempt when returning to foreground.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!gateOpen || !roomId || !isConnected || reconnectStopped || passwordNeeded) return
+      if (isLeavingRef.current) return
+
+      const state = useRoomStore.getState()
+      const shouldRetry = !state.room || state.reconnectMeta.reconnecting
+      if (!shouldRetry || state.reconnectMeta.stopped) return
+
+      joiningRef.current = false
+      clearJoinAttemptTimeout()
+      attemptRoomJoin()
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [attemptRoomJoin, clearJoinAttemptTimeout, gateOpen, isConnected, passwordNeeded, reconnectStopped, roomId])
+
   // --- Handle ROOM_ERROR — password errors, fallback dialog ---
   useEffect(() => {
     const onRoomError = (error: { code: string; message: string }) => {
