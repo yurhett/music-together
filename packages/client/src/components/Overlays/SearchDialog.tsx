@@ -14,6 +14,8 @@ import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { useSocketContext } from '@/providers/SocketProvider'
+import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
@@ -43,6 +45,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const listRef = useRef<VirtualTrackListRef>(null)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+  const { socket } = useSocketContext()
 
   // Album Detail view state
   const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
@@ -83,7 +86,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       }
       onAddToQueue(track)
       setAddedIds((prev) => new Set(prev).add(key))
-      toast.success(`已添加「${track.title}」`)
+      // Removed duplicate toast.success since onAddToQueue (from useQueue) usually already handles it 
+      // or the UI handles feedback.
     },
     [onAddToQueue, queueKeys, addedIds],
   )
@@ -97,7 +101,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       }
       onInsertAfterCurrent(track)
       setAddedIds((prev) => new Set(prev).add(key))
-      toast.success(`已置顶「${track.title}」`)
+      // Removed duplicate toast.success
     },
     [onInsertAfterCurrent, queueKeys, addedIds],
   )
@@ -105,10 +109,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      const { socket } = useRoomStore.getState() as any
-      if (socket) {
-        socket.emit('queue:add-batch', { tracks, playlistName })
-      }
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
@@ -116,7 +117,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       })
       toast.success(`已添加 ${tracks.length} 首歌曲`)
     },
-    []
+    [socket]
   )
 
   const isTrackAdded = useCallback(
