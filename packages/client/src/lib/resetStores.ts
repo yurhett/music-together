@@ -4,7 +4,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useAuthStatusStore } from '@/stores/authStatusStore'
 import { resetClockSync } from '@/lib/clockSync'
 
-/** Reset all room-related stores at once (used on leave/disconnect) */
+/** Reset all room-related stores at once (used on explicit leave or terminal room errors) */
 export function resetAllRoomState() {
   useRoomStore.getState().reset()
   usePlayerStore.getState().reset()

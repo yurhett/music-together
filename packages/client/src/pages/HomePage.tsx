@@ -176,6 +176,7 @@ export default function HomePage() {
     if (!savedNickname) return
     setActionLoading(true)
     setPasswordError(null)
+    storage.setRecentRoomPassword(passwordDialog.room.id, password)
     joinRoom(passwordDialog.room.id, savedNickname, password)
   }
 

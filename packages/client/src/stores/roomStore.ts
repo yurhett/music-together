@@ -12,17 +12,43 @@ function deriveCurrentUser(room: RoomState | null): User | null {
   return room.users.find((u) => u.id === myId) ?? null
 }
 
+interface ReconnectMeta {
+  reconnecting: boolean
+  stopped: boolean
+  joinRetryCount: number
+  lastJoinAttemptAt: number | null
+  lastJoinErrorCode: string | null
+  lastJoinErrorMessage: string | null
+}
+
+function createReconnectMeta(): ReconnectMeta {
+  return {
+    reconnecting: false,
+    stopped: false,
+    joinRetryCount: 0,
+    lastJoinAttemptAt: null,
+    lastJoinErrorCode: null,
+    lastJoinErrorMessage: null,
+  }
+}
+
 interface RoomStore {
   room: RoomState | null
   currentUser: User | null
   /** 房间密码明文（从 ROOM_SETTINGS 事件接收） */
   roomPassword: string | null
+  reconnectMeta: ReconnectMeta
 
   setRoom: (room: RoomState | null) => void
   updateRoom: (partial: Partial<RoomState>) => void
   setRoomPassword: (password: string | null) => void
   addUser: (user: User) => void
   removeUser: (userId: string) => void
+  setReconnecting: (reconnecting: boolean) => void
+  markJoinAttempt: () => void
+  markJoinError: (code: string, message: string) => void
+  stopReconnect: (code: string, message: string) => void
+  clearReconnectMeta: () => void
   reset: () => void
 }
 
@@ -30,8 +56,14 @@ export const useRoomStore = create<RoomStore>((set) => ({
   room: null,
   currentUser: null,
   roomPassword: null,
+  reconnectMeta: createReconnectMeta(),
 
-  setRoom: (room) => set({ room, currentUser: deriveCurrentUser(room) }),
+  setRoom: (room) =>
+    set({
+      room,
+      currentUser: deriveCurrentUser(room),
+      reconnectMeta: createReconnectMeta(),
+    }),
 
   updateRoom: (partial) =>
     set((state) => {
@@ -70,5 +102,55 @@ export const useRoomStore = create<RoomStore>((set) => ({
       return { room }
     }),
 
-  reset: () => set({ room: null, currentUser: null, roomPassword: null }),
+  setReconnecting: (reconnecting) =>
+    set((state) => ({
+      reconnectMeta: {
+        ...state.reconnectMeta,
+        reconnecting,
+        stopped: reconnecting ? false : state.reconnectMeta.stopped,
+        joinRetryCount: reconnecting ? 0 : state.reconnectMeta.joinRetryCount,
+        lastJoinAttemptAt: reconnecting ? null : state.reconnectMeta.lastJoinAttemptAt,
+        lastJoinErrorCode: reconnecting ? null : state.reconnectMeta.lastJoinErrorCode,
+        lastJoinErrorMessage: reconnecting ? null : state.reconnectMeta.lastJoinErrorMessage,
+      },
+    })),
+
+  markJoinAttempt: () =>
+    set((state) => ({
+      reconnectMeta: {
+        ...state.reconnectMeta,
+        joinRetryCount: state.reconnectMeta.joinRetryCount + 1,
+        lastJoinAttemptAt: Date.now(),
+      },
+    })),
+
+  markJoinError: (code, message) =>
+    set((state) => ({
+      reconnectMeta: {
+        ...state.reconnectMeta,
+        lastJoinErrorCode: code,
+        lastJoinErrorMessage: message,
+      },
+    })),
+
+  stopReconnect: (code, message) =>
+    set((state) => ({
+      reconnectMeta: {
+        ...state.reconnectMeta,
+        reconnecting: false,
+        stopped: true,
+        lastJoinErrorCode: code,
+        lastJoinErrorMessage: message,
+      },
+    })),
+
+  clearReconnectMeta: () => set({ reconnectMeta: createReconnectMeta() }),
+
+  reset: () =>
+    set({
+      room: null,
+      currentUser: null,
+      roomPassword: null,
+      reconnectMeta: createReconnectMeta(),
+    }),
 }))

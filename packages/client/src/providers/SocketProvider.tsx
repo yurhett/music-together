@@ -24,6 +24,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     let reauthenticating = false
 
+    const showDisconnectToast = (message: string) => {
+      toast.warning(message, {
+        id: DISCONNECT_TOAST_ID,
+        duration: Infinity,
+      })
+    }
+
     const onConnect = () => {
       setIsConnected(true)
       toast.dismiss(DISCONNECT_TOAST_ID)
@@ -35,10 +42,26 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const onDisconnect = () => {
       setIsConnected(false)
       hasDisconnectedRef.current = true
-      toast.warning('连接已断开，正在重连…', {
-        id: DISCONNECT_TOAST_ID,
-        duration: Infinity,
-      })
+      showDisconnectToast('连接已断开，正在重连…')
+    }
+
+    const onOffline = () => {
+      setIsConnected(false)
+      hasDisconnectedRef.current = true
+      showDisconnectToast('网络已离线，正在等待恢复…')
+    }
+
+    const onOnline = () => {
+      if (cancelled) return
+      if (socket.connected) {
+        setIsConnected(true)
+        toast.dismiss(DISCONNECT_TOAST_ID)
+        toast.success('网络已恢复', { id: 'socket-online' })
+        return
+      }
+
+      showDisconnectToast('网络已恢复，正在重连…')
+      socket.connect()
     }
 
     const bootstrapIdentity = async (showError = true): Promise<boolean> => {
@@ -92,6 +115,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.on('connect', onConnect)
     socket.on('disconnect', onDisconnect)
     socket.on('connect_error', onConnectError)
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('online', onOnline)
     ensureIdentityAndConnect()
 
     return () => {
@@ -99,6 +124,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
       socket.off('connect_error', onConnectError)
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('online', onOnline)
     }
   }, [])
 

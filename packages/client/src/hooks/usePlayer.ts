@@ -28,11 +28,9 @@ export function usePlayer() {
   type RefreshStreamResult = { recovered: boolean; failureNotified?: boolean }
 
   const refreshInFlightRef = useRef<Promise<RefreshStreamResult> | null>(null)
-  const lastRefreshAttemptRef = useRef<{ trackId: string; ts: number } | null>(null)
   const RECOVERY_GRACE_MS = 3000
   const RECOVERY_DELAY_MS = 700
   const STREAM_REFRESH_TIMEOUT_MS = 4000
-  const STREAM_REFRESH_DEDUP_MS = 5000
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
@@ -56,23 +54,14 @@ export function usePlayer() {
       const track = room?.currentTrack
       if (!track) return { recovered: false }
 
-      const now = Date.now()
-      if (
-        lastRefreshAttemptRef.current?.trackId === track.id &&
-        now - lastRefreshAttemptRef.current.ts < STREAM_REFRESH_DEDUP_MS
-      ) {
-        return { recovered: false, failureNotified: true }
-      }
-
       if (refreshInFlightRef.current) {
         return refreshInFlightRef.current
       }
 
-      lastRefreshAttemptRef.current = { trackId: track.id, ts: now }
-
       const refreshPromise = new Promise<RefreshStreamResult>((resolve) => {
         let settled = false
         let failureNotified = false
+        const requestAt = Date.now()
 
         const done = (result: RefreshStreamResult) => {
           if (settled) return
@@ -84,12 +73,21 @@ export function usePlayer() {
         }
 
         const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
+          // Only treat responses newer than this request as refresh success.
+          if (data.playState.serverTimestamp < requestAt - 50) return
           if (data.track.id !== track.id || !data.track.streamUrl) return
           done({ recovered: true })
         }
 
         const onRoomError = (error: { code: string }) => {
-          if (error.code !== ERROR_CODE.STREAM_FAILED) return
+          if (
+            error.code !== ERROR_CODE.STREAM_FAILED &&
+            error.code !== ERROR_CODE.NO_PERMISSION &&
+            error.code !== ERROR_CODE.NOT_IN_ROOM &&
+            error.code !== ERROR_CODE.ROOM_NOT_FOUND
+          ) {
+            return
+          }
           failureNotified = true
           done({ recovered: false, failureNotified: true })
         }

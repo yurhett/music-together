@@ -1,6 +1,7 @@
 import { ERROR_CODE, EVENTS, playerRefreshStreamUrlSchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
+import { createWithRoom } from '../middleware/withRoom.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
@@ -10,6 +11,7 @@ import { logger } from '../utils/logger.js'
 
 export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
+  const withRoom = createWithRoom(io)
 
   socket.on(
     EVENTS.PLAYER_PLAY,
@@ -60,7 +62,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.PLAYER_REFRESH_STREAM_URL,
-    withPermission('play', 'Player', async (ctx, raw) => {
+    withRoom(async (ctx, raw) => {
       if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = playerRefreshStreamUrlSchema.safeParse(raw ?? {})
       if (!parsed.success) return

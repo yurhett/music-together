@@ -29,7 +29,10 @@ export function useRoom() {
 
   const leaveRoom = useCallback(() => {
     const roomId = useRoomStore.getState().room?.id
-    if (roomId) storage.clearRejoinToken(roomId)
+    if (roomId) {
+      storage.clearRejoinToken(roomId)
+      storage.clearRecentRoomPassword(roomId)
+    }
     socket.emit(EVENTS.ROOM_LEAVE)
     resetAllRoomState()
   }, [socket])

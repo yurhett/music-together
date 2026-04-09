@@ -39,6 +39,9 @@ interface RoomCheckInfo {
   userCount: number
 }
 
+const JOIN_RETRY_INTERVAL_MS = 5000
+const JOIN_ATTEMPT_TIMEOUT_MS = 4000
+
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
@@ -48,9 +51,12 @@ export default function RoomPage() {
   const { addTrack, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
+  const reconnectMeta = useRoomStore((s) => s.reconnectMeta)
   const chatOpen = useChatStore((s) => s.isChatOpen)
   const setChatOpen = useChatStore((s) => s.setIsChatOpen)
   const chatUnreadCount = useChatStore((s) => s.unreadCount)
+  const reconnecting = reconnectMeta.reconnecting
+  const reconnectStopped = reconnectMeta.stopped
   const toggleChat = useCallback(() => {
     setChatOpen(!useChatStore.getState().isChatOpen)
   }, [setChatOpen])
@@ -79,6 +85,13 @@ export default function RoomPage() {
   const joiningRef = useRef(false)
   const isLeavingRef = useRef(false)
   const passwordRef = useRef<string | undefined>(undefined)
+  const joinAttemptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearJoinAttemptTimeout = useCallback(() => {
+    if (!joinAttemptTimeoutRef.current) return
+    clearTimeout(joinAttemptTimeoutRef.current)
+    joinAttemptTimeoutRef.current = null
+  }, [])
 
   // --- Pre-check: fetch room existence & password requirement ---
   useEffect(() => {
@@ -140,42 +153,127 @@ export default function RoomPage() {
   // --- Gate start handler (receives password from gate if applicable) ---
   const handleGateStart = useCallback(async (password?: string) => {
     await unlockAudio()
-    if (password) passwordRef.current = password
+    if (password && roomId) {
+      passwordRef.current = password
+      storage.setRecentRoomPassword(roomId, password)
+    }
     setGatePasswordError(null)
     setGateOpen(true)
-  }, [])
+  }, [roomId])
 
-  // --- Auto-join if room state is missing (e.g. page refresh, direct URL access) ---
-  // Only after the interaction gate is open — avoids autoplay warnings.
-  useEffect(() => {
-    if (!gateOpen) return
-    if (isLeavingRef.current) return
-    if (!room && isConnected && !joiningRef.current && roomId) {
-      joiningRef.current = true
+  const attemptRoomJoin = useCallback(
+    (overridePassword?: string) => {
+      if (!roomId) return false
+      if (isLeavingRef.current) return false
+
       const nickname = storage.getNickname()
       if (!nickname) {
         joiningRef.current = false
-        setGateOpen(false) // Re-show InteractionGate so user can set nickname
-        return
+        useRoomStore.getState().markJoinError('NICKNAME_REQUIRED', '缺少昵称，无法重新加入房间')
+        if (!useRoomStore.getState().reconnectMeta.reconnecting) {
+          setGateOpen(false)
+        }
+        return false
       }
+
+      const rejoinToken = storage.getRejoinToken(roomId) ?? undefined
+      const fallbackPassword =
+        overridePassword ??
+        passwordRef.current ??
+        storage.getRecentRoomPassword(roomId) ??
+        useRoomStore.getState().roomPassword ??
+        undefined
+
+      if (fallbackPassword) {
+        passwordRef.current = fallbackPassword
+        storage.setRecentRoomPassword(roomId, fallbackPassword)
+      }
+
+      joiningRef.current = true
+      clearJoinAttemptTimeout()
+      joinAttemptTimeoutRef.current = setTimeout(() => {
+        if (!joiningRef.current) return
+        joiningRef.current = false
+        const state = useRoomStore.getState()
+        if (state.reconnectMeta.stopped) return
+        state.markJoinError('JOIN_TIMEOUT', '加入房间超时，正在重试')
+      }, JOIN_ATTEMPT_TIMEOUT_MS)
+
+      useRoomStore.getState().markJoinAttempt()
       socket.emit(EVENTS.ROOM_JOIN, {
         roomId,
         nickname,
-        password: passwordRef.current || undefined,
-        rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
+        password: fallbackPassword,
+        rejoinToken,
       })
-    }
-    if (room) {
+      return true
+    },
+    [clearJoinAttemptTimeout, roomId, socket],
+  )
+
+  // --- Auto-join / re-join loop ---
+  // While connected and room state is missing (or reconnect recovery is active),
+  // keep attempting ROOM_JOIN every 5s until ROOM_STATE arrives or we hit a terminal error.
+  useEffect(() => {
+    if (!gateOpen || !roomId || !isConnected || reconnectStopped) return
+    if (isLeavingRef.current) return
+    if (passwordNeeded) return
+
+    const shouldJoin = !room || reconnecting
+    if (!shouldJoin) {
       joiningRef.current = false
+      clearJoinAttemptTimeout()
+      return
     }
-  }, [gateOpen, room, isConnected, socket, roomId])
+
+    if (!joiningRef.current) {
+      attemptRoomJoin()
+    }
+
+    const timer = setInterval(() => {
+      if (joiningRef.current || isLeavingRef.current) return
+      const state = useRoomStore.getState()
+      const shouldRetry = !state.room || state.reconnectMeta.reconnecting
+      if (!shouldRetry || state.reconnectMeta.stopped || !socket.connected) return
+      attemptRoomJoin()
+    }, JOIN_RETRY_INTERVAL_MS)
+
+    return () => {
+      clearInterval(timer)
+      clearJoinAttemptTimeout()
+    }
+  }, [attemptRoomJoin, clearJoinAttemptTimeout, gateOpen, isConnected, passwordNeeded, reconnectStopped, roomId, room, reconnecting, socket])
 
   // --- Handle ROOM_ERROR — password errors, fallback dialog ---
   useEffect(() => {
     const onRoomError = (error: { code: string; message: string }) => {
       joiningRef.current = false
+      clearJoinAttemptTimeout()
 
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        if (passwordNeeded) {
+          setPasswordError('密码错误，请重试')
+          setPasswordLoading(false)
+          return
+        }
+
+        // During reconnect retries, keep using the cached password automatically.
+        if (reconnecting) {
+          const hasCachedPassword = Boolean(
+            (roomId && storage.getRecentRoomPassword(roomId)) || passwordRef.current || useRoomStore.getState().roomPassword,
+          )
+          if (hasCachedPassword) {
+            setGatePasswordError('密码验证失败，正在自动重试…')
+            setPasswordLoading(false)
+            return
+          }
+
+          setPasswordNeeded(true)
+          setPasswordError('重连需要房间密码，请输入后继续')
+          setPasswordLoading(false)
+          return
+        }
+
         // If we came through the gate, revert to gate with error
         if (!passwordNeeded && !gateOpen) {
           // Gate was not yet open — shouldn't happen, but handle gracefully
@@ -205,12 +303,17 @@ export default function RoomPage() {
 
     // On successful join, dismiss any password state
     const onRoomState = () => {
+      joiningRef.current = false
+      clearJoinAttemptTimeout()
       if (passwordNeeded) {
         setPasswordNeeded(false)
         setPasswordError(null)
         setPasswordLoading(false)
       }
       setGatePasswordError(null)
+      if (roomId && passwordRef.current) {
+        storage.setRecentRoomPassword(roomId, passwordRef.current)
+      }
     }
 
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
@@ -218,8 +321,9 @@ export default function RoomPage() {
     return () => {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      clearJoinAttemptTimeout()
     }
-  }, [socket, passwordNeeded, gateOpen])
+  }, [socket, passwordNeeded, gateOpen, reconnecting, roomId, clearJoinAttemptTimeout])
 
   // No unmount cleanup needed — the server handles room membership:
   // - On disconnect: server's disconnect handler removes user
@@ -229,18 +333,13 @@ export default function RoomPage() {
   const handlePasswordSubmit = useCallback(
     (password: string) => {
       if (!roomId) return
-      const nickname = storage.getNickname()
-      if (!nickname) return
+      passwordRef.current = password
+      storage.setRecentRoomPassword(roomId, password)
       setPasswordLoading(true)
       setPasswordError(null)
-      socket.emit(EVENTS.ROOM_JOIN, {
-        roomId,
-        nickname,
-        password,
-        rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
-      })
+      attemptRoomJoin(password)
     },
-    [socket, roomId],
+    [attemptRoomJoin, roomId],
   )
 
   // If password dialog is dismissed without submitting, navigate home

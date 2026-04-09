@@ -2,6 +2,10 @@ import type { MusicSource } from '@music-together/shared'
 
 const PREFIX = 'mt-'
 
+// Session-only cache for room passwords entered in this tab.
+// We keep this in memory (not persisted) to reduce leakage risk.
+const roomPasswordCache = new Map<string, string>()
+
 function safeGet(key: string): string | null {
   try {
     return localStorage.getItem(`${PREFIX}${key}`)
@@ -207,6 +211,22 @@ export const storage = {
     if (!data) return
     if (roomId && data.roomId !== roomId) return
     safeRemove('rejoin-token')
+  },
+
+  getRecentRoomPassword: (roomId: string): string | null => {
+    if (!roomId) return null
+    return roomPasswordCache.get(roomId) ?? null
+  },
+  setRecentRoomPassword: (roomId: string, password: string) => {
+    if (!roomId || !password) return
+    roomPasswordCache.set(roomId, password)
+  },
+  clearRecentRoomPassword: (roomId?: string) => {
+    if (!roomId) {
+      roomPasswordCache.clear()
+      return
+    }
+    roomPasswordCache.delete(roomId)
   },
 }
 

@@ -82,10 +82,15 @@ export function useRoomState() {
     const onError = (error: { code: string; message: string }) => {
       // WRONG_PASSWORD is handled by RoomPage's own UI (gate password field),
       // so skip the generic toast to avoid duplicate feedback.
-      if (error.code === ERROR_CODE.WRONG_PASSWORD) return
+      if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        useRoomStore.getState().markJoinError(error.code, error.message)
+        return
+      }
 
+      useRoomStore.getState().markJoinError(error.code, error.message)
       toast.error(error.message)
       if (error.code === ERROR_CODE.ROOM_NOT_FOUND || error.code === ERROR_CODE.ROOM_DISSOLVED) {
+        useRoomStore.getState().stopReconnect(error.code, error.message)
         resetAllRoomState()
         navigateRef.current('/', { replace: true })
       }
