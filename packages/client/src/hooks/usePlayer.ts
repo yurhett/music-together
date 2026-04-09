@@ -31,6 +31,16 @@ export function usePlayer() {
   const RECOVERY_GRACE_MS = 3000
   const RECOVERY_DELAY_MS = 700
   const STREAM_REFRESH_TIMEOUT_MS = 4000
+  const MANUAL_RECOVER_COOLDOWN_MS = 2500
+  const MANUAL_RECOVER_INFLIGHT_MS = 1500
+  const PLAYER_PLAY_COALESCE_MS = 120
+
+  const lastManualRecoverAtRef = useRef(0)
+  const manualRecoverInFlightRef = useRef(false)
+  const manualRecoverUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingPlayerPlayRef = useRef<{ track: Track; playState: ScheduledPlayState } | null>(null)
+  const playerPlayCoalesceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastAppliedPlayRef = useRef<{ trackId: string; serverTimestamp: number; appliedAt: number } | null>(null)
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
@@ -124,7 +134,25 @@ export function usePlayer() {
   // Background recovery: when network/socket returns while Media Session is
   // still in loading state, proactively request authoritative sync and stream URL.
   useEffect(() => {
-    const recoverIfLoading = () => {
+    const clearManualRecoverLock = () => {
+      manualRecoverInFlightRef.current = false
+      if (manualRecoverUnlockTimerRef.current) {
+        clearTimeout(manualRecoverUnlockTimerRef.current)
+        manualRecoverUnlockTimerRef.current = null
+      }
+    }
+
+    const scheduleManualRecoverUnlock = () => {
+      if (manualRecoverUnlockTimerRef.current) {
+        clearTimeout(manualRecoverUnlockTimerRef.current)
+      }
+      manualRecoverUnlockTimerRef.current = setTimeout(() => {
+        manualRecoverUnlockTimerRef.current = null
+        manualRecoverInFlightRef.current = false
+      }, MANUAL_RECOVER_INFLIGHT_MS)
+    }
+
+    const recoverIfLoading = (_trigger: string) => {
       const { room, reconnectMeta } = useRoomStore.getState()
       const { mediaSessionLoading, currentTime } = usePlayerStore.getState()
       if (!socket.connected) return
@@ -132,6 +160,14 @@ export function usePlayer() {
       // During reconnect window, room mapping on server may not be restored yet.
       // Wait until ROOM_STATE arrives before sending room-scoped player events.
       if (reconnectMeta.reconnecting || reconnectMeta.stopped) return
+
+      const now = Date.now()
+      if (manualRecoverInFlightRef.current) return
+      if (now - lastManualRecoverAtRef.current < MANUAL_RECOVER_COOLDOWN_MS) return
+
+      manualRecoverInFlightRef.current = true
+      lastManualRecoverAtRef.current = now
+      scheduleManualRecoverUnlock()
 
       socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
       socket.emit(EVENTS.PLAYER_REFRESH_STREAM_URL, {
@@ -141,36 +177,56 @@ export function usePlayer() {
     }
 
     const onConnect = () => {
-      recoverIfLoading()
+      recoverIfLoading('connect')
     }
 
     const onRoomState = () => {
-      recoverIfLoading()
+      recoverIfLoading('room_state')
     }
 
     const onOnline = () => {
       if (!socket.connected) return
-      recoverIfLoading()
+      recoverIfLoading('online')
     }
 
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return
       // Give ROOM_JOIN/ROOM_STATE a tiny window to settle after foreground resume.
       setTimeout(() => {
-        recoverIfLoading()
+        recoverIfLoading('visible')
       }, 200)
+    }
+
+    const onRecoverAck = () => {
+      clearManualRecoverLock()
+    }
+
+    const onRoomError = (error: { code: string }) => {
+      if (
+        error.code === ERROR_CODE.STREAM_FAILED ||
+        error.code === ERROR_CODE.NOT_IN_ROOM ||
+        error.code === ERROR_CODE.ROOM_NOT_FOUND ||
+        error.code === ERROR_CODE.NO_PERMISSION
+      ) {
+        clearManualRecoverLock()
+      }
     }
 
     socket.on('connect', onConnect)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.PLAYER_PLAY, onRecoverAck)
+    socket.on(EVENTS.ROOM_ERROR, onRoomError)
     window.addEventListener('online', onOnline)
     document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       socket.off('connect', onConnect)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.PLAYER_PLAY, onRecoverAck)
+      socket.off(EVENTS.ROOM_ERROR, onRoomError)
       window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      clearManualRecoverLock()
     }
   }, [socket])
 
@@ -178,6 +234,12 @@ export function usePlayer() {
   useEffect(() => {
     const onDisconnect = () => {
       loadingRef.current = null
+      pendingPlayerPlayRef.current = null
+      lastAppliedPlayRef.current = null
+      if (playerPlayCoalesceTimerRef.current) {
+        clearTimeout(playerPlayCoalesceTimerRef.current)
+        playerPlayCoalesceTimerRef.current = null
+      }
     }
     socket.on('disconnect', onDisconnect)
     return () => {
@@ -190,8 +252,7 @@ export function usePlayer() {
   const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
-      console.log('[Audio Debug] 📡 socket onPlayerPlay received. Track:', data.track.title)
+    const applyPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
       // Deduplicate: ignore if the same track with the same serverTimestamp
       // was requested within the dedup window.  Comparing serverTimestamp
       // ensures that a legitimate replay of the same track (e.g. loop mode)
@@ -205,6 +266,11 @@ export function usePlayer() {
         return
       }
       loadingRef.current = { trackId: data.track.id, ts: now, serverTimestamp: data.playState.serverTimestamp }
+      lastAppliedPlayRef.current = {
+        trackId: data.track.id,
+        serverTimestamp: data.playState.serverTimestamp,
+        appliedAt: now,
+      }
 
       if (recoveryTimerRef.current) {
         clearTimeout(recoveryTimerRef.current)
@@ -249,10 +315,55 @@ export function usePlayer() {
       }
     }
 
+    const flushPendingPlayerPlay = () => {
+      const pending = pendingPlayerPlayRef.current
+      if (!pending) return
+      pendingPlayerPlayRef.current = null
+      applyPlayerPlay(pending)
+    }
+
+    const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
+      console.log('[Audio Debug] 📡 socket onPlayerPlay received. Track:', data.track.title)
+
+      const lastApplied = lastAppliedPlayRef.current
+      const now = Date.now()
+      const isNearDuplicateOfApplied =
+        !!lastApplied &&
+        lastApplied.trackId === data.track.id &&
+        lastApplied.serverTimestamp === data.playState.serverTimestamp &&
+        now - lastApplied.appliedAt < PLAYER_PLAY_COALESCE_MS
+
+      if (isNearDuplicateOfApplied) {
+        return
+      }
+
+      if (!lastApplied || now - lastApplied.appliedAt >= PLAYER_PLAY_COALESCE_MS) {
+        applyPlayerPlay(data)
+        return
+      }
+
+      pendingPlayerPlayRef.current = data
+
+      if (playerPlayCoalesceTimerRef.current) {
+        return
+      }
+
+      const remainingWindow = Math.max(0, PLAYER_PLAY_COALESCE_MS - (now - lastApplied.appliedAt))
+      playerPlayCoalesceTimerRef.current = setTimeout(() => {
+        playerPlayCoalesceTimerRef.current = null
+        flushPendingPlayerPlay()
+      }, remainingWindow)
+    }
+
     socket.on(EVENTS.PLAYER_PLAY, onPlayerPlay)
 
     return () => {
       socket.off(EVENTS.PLAYER_PLAY, onPlayerPlay)
+      pendingPlayerPlayRef.current = null
+      if (playerPlayCoalesceTimerRef.current) {
+        clearTimeout(playerPlayCoalesceTimerRef.current)
+        playerPlayCoalesceTimerRef.current = null
+      }
       if (playTimerRef.current) {
         clearTimeout(playTimerRef.current)
         playTimerRef.current = null
@@ -262,7 +373,7 @@ export function usePlayer() {
         recoveryTimerRef.current = null
       }
     }
-  }, [socket, loadTrack, fetchLyric])
+  }, [socket, loadTrack, fetchLyric, PLAYER_PLAY_COALESCE_MS])
 
   // Recovery: auto-sync player state from room state when desync is detected
   // (e.g. after HMR resets stores, or reconnection where PLAYER_PLAY was missed)
