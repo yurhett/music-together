@@ -24,7 +24,12 @@ type RecoverPlaybackErrorContext = {
   mediaErrorMessage?: string
 }
 
-type RecoverPlaybackErrorFn = (ctx: RecoverPlaybackErrorContext) => Promise<boolean>
+type RecoverPlaybackErrorResult = {
+  recovered: boolean
+  failureNotified?: boolean
+}
+
+type RecoverPlaybackErrorFn = (ctx: RecoverPlaybackErrorContext) => Promise<RecoverPlaybackErrorResult>
 
 // Adapter interface so consumers (like usePlayerSync) get what they expect.
 export class NativeAudioAdapter {
@@ -233,14 +238,15 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
             mediaErrorCode: mediaError?.code ?? null,
             mediaErrorMessage: message || undefined,
           })
-            .then((recovered) => {
-              if (recovered) {
+            .then((result) => {
+              if (result.recovered) {
                 usePlayerStore.getState().setMediaSessionLoading(false)
-                toast.success('播放链接已刷新，正在恢复')
                 return
               }
 
-              toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+              if (!result.failureNotified) {
+                toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+              }
               onTrackEnd()
             })
             .catch(() => {

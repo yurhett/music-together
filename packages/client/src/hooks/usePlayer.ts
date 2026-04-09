@@ -25,7 +25,9 @@ import { usePlayerSync } from './usePlayerSync'
 export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
-  const refreshInFlightRef = useRef<Promise<boolean> | null>(null)
+  type RefreshStreamResult = { recovered: boolean; failureNotified?: boolean }
+
+  const refreshInFlightRef = useRef<Promise<RefreshStreamResult> | null>(null)
   const lastRefreshAttemptRef = useRef<{ trackId: string; ts: number } | null>(null)
   const RECOVERY_GRACE_MS = 3000
   const RECOVERY_DELAY_MS = 700
@@ -52,14 +54,14 @@ export function usePlayer() {
     async (currentTime: number) => {
       const room = useRoomStore.getState().room
       const track = room?.currentTrack
-      if (!track) return false
+      if (!track) return { recovered: false }
 
       const now = Date.now()
       if (
         lastRefreshAttemptRef.current?.trackId === track.id &&
         now - lastRefreshAttemptRef.current.ts < STREAM_REFRESH_DEDUP_MS
       ) {
-        return false
+        return { recovered: false, failureNotified: true }
       }
 
       if (refreshInFlightRef.current) {
@@ -68,10 +70,11 @@ export function usePlayer() {
 
       lastRefreshAttemptRef.current = { trackId: track.id, ts: now }
 
-      const refreshPromise = new Promise<boolean>((resolve) => {
+      const refreshPromise = new Promise<RefreshStreamResult>((resolve) => {
         let settled = false
+        let failureNotified = false
 
-        const done = (result: boolean) => {
+        const done = (result: RefreshStreamResult) => {
           if (settled) return
           settled = true
           clearTimeout(timeout)
@@ -82,16 +85,17 @@ export function usePlayer() {
 
         const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
           if (data.track.id !== track.id || !data.track.streamUrl) return
-          done(true)
+          done({ recovered: true })
         }
 
         const onRoomError = (error: { code: string }) => {
           if (error.code !== ERROR_CODE.STREAM_FAILED) return
-          done(false)
+          failureNotified = true
+          done({ recovered: false, failureNotified: true })
         }
 
         const timeout = setTimeout(() => {
-          done(false)
+          done({ recovered: false, failureNotified })
         }, STREAM_REFRESH_TIMEOUT_MS)
 
         socket.on(EVENTS.PLAYER_PLAY, onPlayerPlay)
