@@ -382,6 +382,26 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
     }
 
     const handlePause = () => {
+      const { mediaSessionLoading } = usePlayerStore.getState()
+      const shouldResumeKeepAlive =
+        document.hidden &&
+        isStandaloneMode() &&
+        mediaSessionLoading &&
+        globalAudio.src.startsWith('data:audio/wav')
+
+      if (shouldResumeKeepAlive) {
+        recordKeepAliveDebug('keepalive:paused-unexpected', globalAudio)
+        // iOS standalone may pause background audio session after lifecycle transitions.
+        // Re-arm the keepalive track so Media Session does not drop to "not playing".
+        globalAudio.play().then(() => {
+          recordKeepAliveDebug('keepalive:resume-play-ok', globalAudio)
+        }).catch((e) => {
+          recordKeepAliveDebug('keepalive:resume-play-failed', globalAudio, {
+            error: String(e),
+          })
+        })
+      }
+
       usePlayerStore.getState().setIsPlaying(false)
       stopTimeUpdate()
     }
