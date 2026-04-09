@@ -1,4 +1,4 @@
-import { EVENTS, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, playerRefreshStreamUrlSchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
@@ -55,6 +55,26 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     EVENTS.PLAYER_PREV,
     withPermission('prev', 'Player', async (ctx) => {
       await playerService.playPrevTrackInRoom(ctx.io, ctx.roomId)
+    }),
+  )
+
+  socket.on(
+    EVENTS.PLAYER_REFRESH_STREAM_URL,
+    withPermission('play', 'Player', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
+      const parsed = playerRefreshStreamUrlSchema.safeParse(raw ?? {})
+      if (!parsed.success) return
+
+      const ok = await playerService.refreshCurrentTrackStreamUrlForSocket(ctx.socket, ctx.roomId, {
+        currentTime: parsed.data.currentTime,
+        reason: parsed.data.reason,
+      })
+      if (!ok) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.STREAM_FAILED,
+          message: '当前歌曲播放链接刷新失败，请切歌重试',
+        })
+      }
     }),
   )
 

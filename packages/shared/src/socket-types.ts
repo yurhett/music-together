@@ -88,6 +88,10 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_SYNC]: (data: { currentTime: number; trackId?: string; hostServerTime?: number }) => void
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void
   [EVENTS.PLAYER_SET_MODE]: (data: { mode: PlayMode }) => void
+  [EVENTS.PLAYER_REFRESH_STREAM_URL]: (data?: {
+    currentTime?: number
+    reason?: 'audio-error' | 'manual'
+  }) => void
 
   [EVENTS.QUEUE_ADD]: (data: { track: Track }) => void
   [EVENTS.QUEUE_REMOVE]: (data: { trackId: string }) => void

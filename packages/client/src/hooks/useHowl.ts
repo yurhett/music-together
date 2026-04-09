@@ -18,6 +18,14 @@ const PLAY_ERROR_TIMEOUT_MS = 3000
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
 const STALLED_TIMEOUT_MS = 8000
 
+type RecoverPlaybackErrorContext = {
+  currentTime: number
+  mediaErrorCode: number | null
+  mediaErrorMessage?: string
+}
+
+type RecoverPlaybackErrorFn = (ctx: RecoverPlaybackErrorContext) => Promise<boolean>
+
 // Adapter interface so consumers (like usePlayerSync) get what they expect.
 export class NativeAudioAdapter {
   playing() {
@@ -63,7 +71,7 @@ export class NativeAudioAdapter {
   }
 }
 
-export function useHowl(onTrackEnd: () => void) {
+export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: RecoverPlaybackErrorFn) {
   const howlRef = useRef<NativeAudioAdapter | null>(null)
   const soundIdRef = useRef<number | undefined>(undefined)
   const animFrameRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -74,6 +82,7 @@ export function useHowl(onTrackEnd: () => void) {
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
+  const recoveringRef = useRef(false)
   const visibilityCleanupRef = useRef<(() => void) | null>(null)
 
   const volume = usePlayerStore((s) => s.volume)
@@ -206,6 +215,44 @@ export function useHowl(onTrackEnd: () => void) {
       retryRef.current = false
       if (globalAudio.src && !globalAudio.src.startsWith('data:audio/wav')) {
         console.error('Audio load error (after retry):', globalAudio.error)
+        const mediaError = globalAudio.error
+        const message = String((mediaError as MediaError & { message?: string } | null)?.message ?? '')
+        const normalized = message.toLowerCase()
+        const likely403Like =
+          mediaError?.code === 2 ||
+          mediaError?.code === 4 ||
+          normalized.includes('403') ||
+          normalized.includes('forbidden') ||
+          normalized.includes('status code 403')
+
+        if (!recoveringRef.current && likely403Like && onRecoverPlaybackError) {
+          recoveringRef.current = true
+          usePlayerStore.getState().setMediaSessionLoading(true)
+          void onRecoverPlaybackError({
+            currentTime: Math.max(0, Number.isFinite(globalAudio.currentTime) ? globalAudio.currentTime : 0),
+            mediaErrorCode: mediaError?.code ?? null,
+            mediaErrorMessage: message || undefined,
+          })
+            .then((recovered) => {
+              if (recovered) {
+                usePlayerStore.getState().setMediaSessionLoading(false)
+                toast.success('播放链接已刷新，正在恢复')
+                return
+              }
+
+              toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+              onTrackEnd()
+            })
+            .catch(() => {
+              toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
+              onTrackEnd()
+            })
+            .finally(() => {
+              recoveringRef.current = false
+            })
+          return
+        }
+
         usePlayerStore.getState().setMediaSessionLoading(true)
         toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
         onTrackEnd()
@@ -223,7 +270,7 @@ export function useHowl(onTrackEnd: () => void) {
       globalAudio.removeEventListener('ended', handleEnded)
       globalAudio.removeEventListener('error', handleError)
     }
-  }, [onTrackEnd, startTimeUpdate, stopTimeUpdate])
+  }, [onRecoverPlaybackError, onTrackEnd, startTimeUpdate, stopTimeUpdate])
 
   const loadTrack = useCallback(
     (track: Track, seekTo?: number, autoPlay = true) => {
@@ -243,6 +290,7 @@ export function useHowl(onTrackEnd: () => void) {
       soundIdRef.current = 1
       trackTitleRef.current = track.title
       retryRef.current = false
+      recoveringRef.current = false
 
       usePlayerStore.getState().setMediaSessionLoading(true)
 
@@ -353,6 +401,7 @@ export function useHowl(onTrackEnd: () => void) {
         clearTimeout(playErrorTimerRef.current)
         playErrorTimerRef.current = null
       }
+      recoveringRef.current = false
       usePlayerStore.getState().setMediaSessionLoading(false)
       stopTimeUpdate()
       globalAudio.pause()

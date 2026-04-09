@@ -1,7 +1,7 @@
 import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
-import { musicProvider } from './musicProvider.js'
+import { musicProvider, STREAM_URL_CACHE_TTL_MS } from './musicProvider.js'
 import * as queueService from './queueService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
@@ -19,6 +19,24 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 const playMutexes = new Map<string, Promise<unknown>>()
 const radioAutoNextTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const radioAutoNextGeneration = new Map<string, number>()
+const currentTrackUrlIssuedAt = new Map<string, number>()
+
+// Rejoin sync should refresh links before they approach common upstream expiry.
+const REJOIN_STREAM_URL_REFRESH_AGE_MS = STREAM_URL_CACHE_TTL_MS
+
+function markCurrentTrackUrlIssuedAt(roomId: string): void {
+  currentTrackUrlIssuedAt.set(roomId, Date.now())
+}
+
+function clearCurrentTrackUrlIssuedAt(roomId: string): void {
+  currentTrackUrlIssuedAt.delete(roomId)
+}
+
+function getCurrentTrackUrlAgeMs(roomId: string): number | null {
+  const issuedAt = currentTrackUrlIssuedAt.get(roomId)
+  if (!issuedAt) return null
+  return Math.max(0, Date.now() - issuedAt)
+}
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
   const prev = playMutexes.get(roomId) ?? Promise.resolve()
@@ -220,6 +238,9 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   // Update room state — align serverTimestamp with the scheduled execution time
   // so that estimateCurrentTime() is accurate before the first conductor report.
   room.currentTrack = resolved
+  if (resolved.streamUrl) {
+    markCurrentTrackUrlIssuedAt(roomId)
+  }
   const scheduleTime = getScheduleTime(roomId)
   room.playState = {
     isPlaying: true,
@@ -297,6 +318,9 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
   if (room) {
     if (track === null) {
       cancelRadioAutoNext(roomId)
+      clearCurrentTrackUrlIssuedAt(roomId)
+    } else if (track.streamUrl) {
+      markCurrentTrackUrlIssuedAt(roomId)
     }
     room.currentTrack = track
     room.playState = {
@@ -408,6 +432,59 @@ export function playPrevTrackInRoom(
   })
 }
 
+/**
+ * Refresh stream URL for the room's current track and push an updated
+ * PLAYER_PLAY payload to the requesting socket only.
+ */
+export function refreshCurrentTrackStreamUrlForSocket(
+  socket: TypedSocket,
+  roomId: string,
+  options?: { currentTime?: number; reason?: 'audio-error' | 'manual' },
+): Promise<boolean> {
+  return withPlayMutex(roomId, async () => {
+    const room = roomRepo.get(roomId)
+    if (!room?.currentTrack) return false
+
+    const currentTrack = room.currentTrack
+    const cookie = authService.getAnyCookie(currentTrack.source, roomId)
+    const refreshed = await resolveStreamUrl(currentTrack.source, currentTrack.urlId, room.audioQuality, cookie ?? undefined)
+    if (!refreshed) return false
+
+    const currentTime = Math.max(
+      0,
+      options?.currentTime ?? estimateCurrentTime(roomId),
+    )
+
+    const scheduleTime = room.playState.isPlaying ? getScheduleTime(roomId) : Date.now()
+    room.currentTrack = { ...currentTrack, streamUrl: refreshed }
+    markCurrentTrackUrlIssuedAt(roomId)
+    room.playState = {
+      ...room.playState,
+      currentTime,
+      serverTimestamp: scheduleTime,
+    }
+
+    socket.emit(EVENTS.PLAYER_PLAY, {
+      track: room.currentTrack,
+      playState: {
+        isPlaying: room.playState.isPlaying,
+        currentTime,
+        serverTimestamp: scheduleTime,
+        serverTimeToExecute: scheduleTime,
+      },
+    })
+
+    logger.info(`Current track stream URL refreshed for socket`, {
+      roomId,
+      socketId: socket.id,
+      reason: options?.reason ?? 'unknown',
+      trackId: currentTrack.id,
+    })
+
+    return true
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Playback sync for newly-joined clients
 // ---------------------------------------------------------------------------
@@ -423,6 +500,39 @@ export async function syncPlaybackToSocket(
   room: RoomData,
 ): Promise<void> {
   const isAloneInRoom = room.users.length === 1
+
+  if (room.currentTrack) {
+    const currentTrack = room.currentTrack
+    const urlAgeMs = currentTrack.streamUrl ? getCurrentTrackUrlAgeMs(roomId) : null
+    const shouldRefreshStreamUrl = !currentTrack.streamUrl || urlAgeMs === null || urlAgeMs > REJOIN_STREAM_URL_REFRESH_AGE_MS
+
+    if (shouldRefreshStreamUrl) {
+      try {
+        const cookie = authService.getAnyCookie(currentTrack.source, roomId)
+        const refreshed = await resolveStreamUrl(currentTrack.source, currentTrack.urlId, room.audioQuality, cookie ?? undefined)
+        if (refreshed) {
+          room.currentTrack = { ...currentTrack, streamUrl: refreshed }
+          markCurrentTrackUrlIssuedAt(roomId)
+          logger.info(`Rejoin stream URL refreshed for ${currentTrack.source}/${currentTrack.urlId}`, {
+            roomId,
+            hadUrl: !!currentTrack.streamUrl,
+            urlAgeMs,
+          })
+        } else {
+          logger.warn(`Rejoin stream URL refresh failed for ${currentTrack.source}/${currentTrack.urlId}`, {
+            roomId,
+            hadUrl: !!currentTrack.streamUrl,
+            urlAgeMs,
+          })
+        }
+      } catch (err) {
+        logger.warn(`Rejoin stream URL refresh threw for ${currentTrack.source}/${currentTrack.urlId}`, {
+          roomId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
 
   if (room.currentTrack?.streamUrl) {
     // Normal mode keeps the old behavior (alone rejoin auto-resume).
@@ -470,6 +580,7 @@ export function cleanupRoom(roomId: string): void {
   conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
   radioAutoNextGeneration.delete(roomId)
+  clearCurrentTrackUrlIssuedAt(roomId)
 }
 
 export function handleRoomModeChanged(io: TypedServer, roomId: string): void {

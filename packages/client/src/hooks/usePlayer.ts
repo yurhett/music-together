@@ -5,7 +5,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, Track } from '@music-together/shared'
-import { EVENTS } from '@music-together/shared'
+import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
@@ -25,8 +25,12 @@ import { usePlayerSync } from './usePlayerSync'
 export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
+  const refreshInFlightRef = useRef<Promise<boolean> | null>(null)
+  const lastRefreshAttemptRef = useRef<{ trackId: string; ts: number } | null>(null)
   const RECOVERY_GRACE_MS = 3000
   const RECOVERY_DELAY_MS = 700
+  const STREAM_REFRESH_TIMEOUT_MS = 4000
+  const STREAM_REFRESH_DEDUP_MS = 5000
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
@@ -44,7 +48,72 @@ export function usePlayer() {
     }
   }, [socket])
 
-  const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
+  const refreshCurrentTrackStreamUrl = useCallback(
+    async (currentTime: number) => {
+      const room = useRoomStore.getState().room
+      const track = room?.currentTrack
+      if (!track) return false
+
+      const now = Date.now()
+      if (
+        lastRefreshAttemptRef.current?.trackId === track.id &&
+        now - lastRefreshAttemptRef.current.ts < STREAM_REFRESH_DEDUP_MS
+      ) {
+        return false
+      }
+
+      if (refreshInFlightRef.current) {
+        return refreshInFlightRef.current
+      }
+
+      lastRefreshAttemptRef.current = { trackId: track.id, ts: now }
+
+      const refreshPromise = new Promise<boolean>((resolve) => {
+        let settled = false
+
+        const done = (result: boolean) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          socket.off(EVENTS.PLAYER_PLAY, onPlayerPlay)
+          socket.off(EVENTS.ROOM_ERROR, onRoomError)
+          resolve(result)
+        }
+
+        const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
+          if (data.track.id !== track.id || !data.track.streamUrl) return
+          done(true)
+        }
+
+        const onRoomError = (error: { code: string }) => {
+          if (error.code !== ERROR_CODE.STREAM_FAILED) return
+          done(false)
+        }
+
+        const timeout = setTimeout(() => {
+          done(false)
+        }, STREAM_REFRESH_TIMEOUT_MS)
+
+        socket.on(EVENTS.PLAYER_PLAY, onPlayerPlay)
+        socket.on(EVENTS.ROOM_ERROR, onRoomError)
+        socket.emit(EVENTS.PLAYER_REFRESH_STREAM_URL, {
+          currentTime: Math.max(0, currentTime),
+          reason: 'audio-error',
+        })
+      })
+
+      refreshInFlightRef.current = refreshPromise.finally(() => {
+        refreshInFlightRef.current = null
+      })
+
+      return refreshInFlightRef.current
+    },
+    [socket],
+  )
+
+  const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext, async (ctx) => {
+    return refreshCurrentTrackStreamUrl(ctx.currentTime)
+  })
   const { fetchLyric } = useLyric()
 
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)

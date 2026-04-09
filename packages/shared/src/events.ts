@@ -24,6 +24,7 @@ export const EVENTS = {
   PLAYER_SEEK: 'player:seek',
   PLAYER_NEXT: 'player:next',
   PLAYER_PREV: 'player:prev',
+  PLAYER_REFRESH_STREAM_URL: 'player:refresh_stream_url',
   PLAYER_SYNC: 'player:sync',
   PLAYER_SYNC_REQUEST: 'player:sync_request',
   PLAYER_SYNC_RESPONSE: 'player:sync_response',

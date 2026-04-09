@@ -54,6 +54,11 @@ export const playerSetModeSchema = z.object({
   mode: z.enum(['sequential', 'loop-all', 'loop-one', 'shuffle']),
 })
 
+export const playerRefreshStreamUrlSchema = z.object({
+  currentTime: z.number().finite().nonnegative().optional(),
+  reason: z.enum(['audio-error', 'manual']).optional(),
+})
+
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------

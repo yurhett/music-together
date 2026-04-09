@@ -164,10 +164,19 @@ const PLAYLIST_PATHS: Record<MusicSource, string> = {
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
 
+// Stream URLs from upstream providers are often short-lived signed links.
+// Keep cache conservative to reduce reusing expired URLs after reconnect.
+export const STREAM_URL_CACHE_TTL_MS = 15 * MINUTE
+
 // ---------------------------------------------------------------------------
 // TrackMeta — Track without per-instance fields (id, requestedBy)
 // ---------------------------------------------------------------------------
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
+
+interface CachedStreamUrl {
+  url: string
+  cachedAt: number
+}
 
 class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
@@ -198,7 +207,10 @@ class MusicProvider {
   })
 
   // Layer 3: Resource Caches — scalar values for stream URLs, covers, lyrics.
-  private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
+  private streamUrlCache = new LRUCache<string, CachedStreamUrl>({
+    max: 500,
+    ttl: STREAM_URL_CACHE_TTL_MS,
+  })
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
   private lyricCache = new LRUCache<
     string,
@@ -455,8 +467,9 @@ class MusicProvider {
       const cacheKey = `${source}:${urlId}:${bitrate}`
       const cached = this.streamUrlCache.get(cacheKey)
       if (cached) {
-        logger.info(`Stream URL cache hit: ${source}/${urlId}`)
-        return cached
+        const ageSec = Math.floor((Date.now() - cached.cachedAt) / 1000)
+        logger.info(`Stream URL cache hit: ${source}/${urlId} (age=${ageSec}s)`)
+        return cached.url
       }
     }
 
@@ -489,7 +502,10 @@ class MusicProvider {
 
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
       if (!cookie && url) {
-        this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
+        this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, {
+          url,
+          cachedAt: Date.now(),
+        })
       }
 
       return url
