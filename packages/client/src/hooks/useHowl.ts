@@ -20,6 +20,8 @@ const PLAY_ERROR_TIMEOUT_MS = 3000
 const STALLED_TIMEOUT_MS = 8000
 const GLOBAL_AUDIO_TEARDOWN_DELAY_MS = 1500
 const HIDDEN_STREAM_LOAD_WATCHDOG_MS = 4000
+const SAME_TRACK_RELOAD_GUARD_MS = 1800
+const SAME_TRACK_SEEK_ALIGN_THRESHOLD_S = 1.2
 
 let activeHowlHookCount = 0
 let globalAudioTeardownTimer: ReturnType<typeof setTimeout> | null = null
@@ -145,6 +147,7 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
   const hiddenLoadWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingForegroundLoadRef = useRef<PendingForegroundLoad | null>(null)
   const loadTrackRef = useRef<LoadTrackFn | null>(null)
+  const lastLoadSignatureRef = useRef<{ trackId: string; streamUrl: string; at: number } | null>(null)
 
   const volume = usePlayerStore((s) => s.volume)
 
@@ -532,6 +535,58 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         startSilentKeepAlive('hidden-defer-track-load')
         return
       }
+
+      const now = Date.now()
+      const currentTrack = usePlayerStore.getState().currentTrack
+      const lastLoad = lastLoadSignatureRef.current
+      const hasSameSrc = Boolean(track.streamUrl) && globalAudio.src === track.streamUrl
+      const isBurstSameTrackReload =
+        hasSameSrc &&
+        currentTrack?.id === track.id &&
+        !!lastLoad &&
+        lastLoad.trackId === track.id &&
+        lastLoad.streamUrl === track.streamUrl &&
+        now - lastLoad.at < SAME_TRACK_RELOAD_GUARD_MS &&
+        !globalAudio.error
+
+      if (isBurstSameTrackReload) {
+        recordKeepAliveDebug('track:load-same-src-skipped', globalAudio, {
+          title: track.title,
+          sinceLastMs: now - (lastLoad?.at ?? now),
+          paused: globalAudio.paused,
+          seekTo: seekTo ?? null,
+        })
+
+        if (typeof seekTo === 'number' && Number.isFinite(seekTo)) {
+          const targetSeek = Math.max(0, seekTo)
+          const currentSeek = Number.isFinite(globalAudio.currentTime) ? globalAudio.currentTime : 0
+          if (Math.abs(currentSeek - targetSeek) > SAME_TRACK_SEEK_ALIGN_THRESHOLD_S) {
+            globalAudio.currentTime = targetSeek
+            usePlayerStore.getState().setCurrentTime(targetSeek)
+            recordKeepAliveDebug('track:load-same-src-seek-align', globalAudio, {
+              title: track.title,
+              currentSeek,
+              targetSeek,
+            })
+          }
+        }
+
+        if (autoPlay && globalAudio.paused) {
+          globalAudio.play().then(() => {
+            recordKeepAliveDebug('track:load-same-src-resume-ok', globalAudio, {
+              title: track.title,
+            })
+          }).catch((e) => {
+            recordKeepAliveDebug('track:load-same-src-resume-failed', globalAudio, {
+              title: track.title,
+              error: String(e),
+            })
+          })
+        }
+
+        usePlayerStore.getState().setCurrentTrack(track)
+        return
+      }
       
       if (unmuteTimerRef.current) {
         clearTimeout(unmuteTimerRef.current)
@@ -556,6 +611,12 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         clearHiddenLoadWatchdog('no-stream-url')
         usePlayerStore.getState().setMediaSessionLoading(false)
         return
+      }
+
+      lastLoadSignatureRef.current = {
+        trackId: track.id,
+        streamUrl: track.streamUrl,
+        at: now,
       }
 
       const loadStartTime = Date.now()
@@ -706,6 +767,7 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
       }
       clearHiddenLoadWatchdog('howl-cleanup')
       pendingForegroundLoadRef.current = null
+      lastLoadSignatureRef.current = null
       recoveringRef.current = false
       stopTimeUpdate()
 

@@ -34,6 +34,7 @@ export function usePlayer() {
   const MANUAL_RECOVER_COOLDOWN_MS = 2500
   const MANUAL_RECOVER_INFLIGHT_MS = 1500
   const PLAYER_PLAY_COALESCE_MS = 120
+  const VISIBILITY_RECOVER_DELAY_MS = 1200
 
   const lastManualRecoverAtRef = useRef(0)
   const manualRecoverInFlightRef = useRef(false)
@@ -134,6 +135,8 @@ export function usePlayer() {
   // Background recovery: when network/socket returns while Media Session is
   // still in loading state, proactively request authoritative sync and stream URL.
   useEffect(() => {
+    let visibilityRecoverTimer: ReturnType<typeof setTimeout> | null = null
+
     const clearManualRecoverLock = () => {
       manualRecoverInFlightRef.current = false
       if (manualRecoverUnlockTimerRef.current) {
@@ -192,9 +195,13 @@ export function usePlayer() {
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return
       // Give ROOM_JOIN/ROOM_STATE a tiny window to settle after foreground resume.
-      setTimeout(() => {
+      if (visibilityRecoverTimer) {
+        clearTimeout(visibilityRecoverTimer)
+      }
+      visibilityRecoverTimer = setTimeout(() => {
+        visibilityRecoverTimer = null
         recoverIfLoading('visible')
-      }, 200)
+      }, VISIBILITY_RECOVER_DELAY_MS)
     }
 
     const onRecoverAck = () => {
@@ -226,6 +233,10 @@ export function usePlayer() {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      if (visibilityRecoverTimer) {
+        clearTimeout(visibilityRecoverTimer)
+        visibilityRecoverTimer = null
+      }
       clearManualRecoverLock()
     }
   }, [socket])
