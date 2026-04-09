@@ -121,6 +121,49 @@ export function usePlayer() {
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
   usePlayerSync(howlRef, soundIdRef)
 
+  // Background recovery: when network/socket returns while Media Session is
+  // still in loading state, proactively request authoritative sync and stream URL.
+  useEffect(() => {
+    const recoverIfLoading = () => {
+      const { room, reconnectMeta } = useRoomStore.getState()
+      const { mediaSessionLoading, currentTime } = usePlayerStore.getState()
+      if (!socket.connected) return
+      if (!room?.currentTrack || !mediaSessionLoading) return
+      // During reconnect window, room mapping on server may not be restored yet.
+      // Wait until ROOM_STATE arrives before sending room-scoped player events.
+      if (reconnectMeta.reconnecting || reconnectMeta.stopped) return
+
+      socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+      socket.emit(EVENTS.PLAYER_REFRESH_STREAM_URL, {
+        currentTime: Math.max(0, currentTime),
+        reason: 'manual',
+      })
+    }
+
+    const onConnect = () => {
+      recoverIfLoading()
+    }
+
+    const onRoomState = () => {
+      recoverIfLoading()
+    }
+
+    const onOnline = () => {
+      if (!socket.connected) return
+      recoverIfLoading()
+    }
+
+    socket.on('connect', onConnect)
+    socket.on(EVENTS.ROOM_STATE, onRoomState)
+    window.addEventListener('online', onOnline)
+
+    return () => {
+      socket.off('connect', onConnect)
+      socket.off(EVENTS.ROOM_STATE, onRoomState)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [socket])
+
   // Reset dedup ref on disconnect so reconnect PLAYER_PLAY is never blocked
   useEffect(() => {
     const onDisconnect = () => {

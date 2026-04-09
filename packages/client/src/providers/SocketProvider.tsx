@@ -53,14 +53,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     const onOnline = () => {
       if (cancelled) return
-      if (socket.connected) {
-        setIsConnected(true)
-        toast.dismiss(DISCONNECT_TOAST_ID)
-        toast.success('网络已恢复', { id: 'socket-online' })
-        return
-      }
-
+      setIsConnected(false)
+      hasDisconnectedRef.current = true
       showDisconnectToast('网络已恢复，正在重连…')
+      // Force a fresh handshake to avoid stale "connected" state after background/offline periods.
+      if (socket.connected) {
+        socket.disconnect()
+      }
       socket.connect()
     }
 

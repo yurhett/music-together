@@ -26,21 +26,12 @@ export function useConnectionGuard() {
       markReconnecting('NETWORK_OFFLINE', 'browser-offline')
     }
 
-    const onOnline = () => {
-      const { room, clearReconnectMeta } = useRoomStore.getState()
-      if (!room) return
-      if (!socket.connected) return
-      clearReconnectMeta()
-    }
-
     socket.on('disconnect', onDisconnect)
     window.addEventListener('offline', onOffline)
-    window.addEventListener('online', onOnline)
 
     return () => {
       socket.off('disconnect', onDisconnect)
       window.removeEventListener('offline', onOffline)
-      window.removeEventListener('online', onOnline)
     }
   }, [socket])
 }

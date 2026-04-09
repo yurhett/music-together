@@ -87,6 +87,14 @@ export function useRoomState() {
         return
       }
 
+      const reconnectMeta = useRoomStore.getState().reconnectMeta
+      // Transient mapping gap during reconnect: player events may hit withRoom
+      // before ROOM_JOIN completes. Keep silent and let reconnect retry finish.
+      if (error.code === ERROR_CODE.NOT_IN_ROOM && reconnectMeta.reconnecting) {
+        useRoomStore.getState().markJoinError(error.code, error.message)
+        return
+      }
+
       useRoomStore.getState().markJoinError(error.code, error.message)
       toast.error(error.message)
       if (error.code === ERROR_CODE.ROOM_NOT_FOUND || error.code === ERROR_CODE.ROOM_DISSOLVED) {
