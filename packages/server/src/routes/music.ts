@@ -45,6 +45,9 @@ router.get(
     if (type === 'album') {
       const albums = await musicProvider.searchAlbum(source, keyword, pageSize, pageNum)
       res.json({ tracks: albums, page: pageNum, hasMore: albums.length >= pageSize })
+    } else if (type === 'playlist') {
+      const playlists = await musicProvider.searchPlaylist(source, keyword, pageSize, pageNum)
+      res.json({ tracks: playlists, page: pageNum, hasMore: playlists.length >= pageSize })
     } else {
       const tracks = await musicProvider.search(source, keyword, pageSize, pageNum)
       res.json({ tracks, page: pageNum, hasMore: tracks.length >= pageSize })

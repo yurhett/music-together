@@ -39,7 +39,7 @@ interface SearchDialogProps {
 
 export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCurrent }: SearchDialogProps) {
   const [source, setSource] = useState<MusicSource>('netease')
-  const [searchType, setSearchType] = useState<'song' | 'album'>('song')
+  const [searchType, setSearchType] = useState<'song' | 'album' | 'playlist'>('song')
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const listRef = useRef<VirtualTrackListRef>(null)
@@ -130,7 +130,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
 
   const handleSelectAlbum = (album: Playlist) => {
     setSelectedAlbum(album)
-    fetchPlaylistTracks(source, album.id, album.trackCount, 'album')
+    fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
   }
 
   return (
@@ -179,7 +179,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               <Tabs
                 value={searchType}
                 onValueChange={(v) => {
-                  setSearchType(v as 'song' | 'album')
+                  setSearchType(v as 'song' | 'album' | 'playlist')
                   resetState()
                   setAddedIds(new Set())
                 }}
@@ -187,13 +187,14 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 <TabsList className="w-full">
                   <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
                   <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
+                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
                 </TabsList>
               </Tabs>
 
               {/* Search input */}
               <div className="flex gap-2">
                 <Input
-                  placeholder={searchType === 'song' ? '搜索歌曲、歌手...' : '搜索专辑...'}
+                  placeholder={searchType === 'song' ? '搜索歌曲、歌手...' : searchType === 'album' ? '搜索专辑...' : '搜索歌单...'}
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -239,9 +240,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">
-                        {(results as Playlist[]).map((album) => (
+                        {(results as Playlist[]).map((album, index) => (
                           <button
-                            key={album.id}
+                            key={`${album.id}-${index}`}
                             className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors"
                             onClick={() => handleSelectAlbum(album)}
                           >

@@ -11,11 +11,11 @@ const PAGE_SIZE = 20
  * 搜索逻辑 hook — 管理搜索/翻页/abort/竞态保护。
  * 从 SearchDialog 中提取，使 UI 组件只关注渲染。
  */
-export function useSearch<T extends 'song' | 'album' = 'song'>(
+export function useSearch<T extends 'song' | 'album' | 'playlist' = 'song'>(
   source: MusicSource,
   type: T = 'song' as T,
 ) {
-  const [results, setResults] = useState<T extends 'album' ? import('@music-together/shared').Playlist[] : Track[]>(([] as any))
+  const [results, setResults] = useState<T extends 'album' | 'playlist' ? import('@music-together/shared').Playlist[] : Track[]>(([] as any))
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -40,7 +40,7 @@ export function useSearch<T extends 'song' | 'album' = 'song'>(
       searchKeyword: string,
       searchPage: number,
       signal: AbortSignal,
-      searchType: 'song' | 'album'
+      searchType: 'song' | 'album' | 'playlist'
     ): Promise<{ tracks: any[]; hasMore: boolean }> => {
       const res = await fetch(
         `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,

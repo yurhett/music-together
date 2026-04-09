@@ -1,0 +1,5 @@
+- [x] `searchQuerySchema` 支持了 `'playlist'` 搜索类型
+- [x] `musicProvider.ts` 中的 `searchPlaylist` 能够正确调用三大平台的 API 并返回规范化的 `Playlist` 对象数组
+- [x] `music.ts` 路由正确处理了 `playlist` 类型的搜索请求
+- [x] 客户端 `SearchDialog` 中出现了“歌单”选项卡
+- [x] 客户端能够成功搜索歌单并展示，点击后可查看歌单详情

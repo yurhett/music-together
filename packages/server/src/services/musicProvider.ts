@@ -463,6 +463,103 @@ class MusicProvider {
     }
   }
 
+  /**
+   * Search for playlists. Returns a list of Playlist objects.
+   */
+  async searchPlaylist(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+    if (!keyword.trim()) return []
+
+    try {
+      if (source === 'tencent') {
+        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+        const payload = {
+          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+            module: 'music.search.SearchCgiService',
+            method: 'DoSearchForQQMusicDesktop',
+            param: { num_per_page: limit, page_num: page, search_type: 3, query: keyword, grp: 1 },
+          },
+        }
+
+        const response = await withTimeout(
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Referer: 'https://y.qq.com',
+              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+            },
+            body: JSON.stringify(payload),
+          }).then((res) => res.json())
+        )
+
+        if (!response) return []
+
+        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
+        if (result?.code !== 0 || !result?.data?.body?.songlist?.list) return []
+
+        return result.data.body.songlist.list.map((playlist: any) => ({
+          id: String(playlist.dissid),
+          name: playlist.dissname || 'Unknown Playlist',
+          cover: playlist.imgurl || '',
+          trackCount: playlist.song_count || 0,
+          source: 'tencent',
+          creator: playlist.creator?.name || '',
+          description: playlist.introduction || '',
+        }))
+      }
+
+      if (source === 'kugou') {
+        const url = `http://mobilecdn.kugou.com/api/v3/search/special?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
+        const response = await withTimeout(fetch(url).then(res => res.json()))
+        
+        if (!response || response.errcode !== 0 || !response.data?.info) return []
+        
+        return response.data.info.map((playlist: any) => ({
+          id: String(playlist.specialid),
+          name: playlist.specialname || 'Unknown Playlist',
+          cover: (playlist.imgurl || '').replace('{size}', '400'),
+          trackCount: playlist.songcount || 0,
+          source: 'kugou',
+          creator: playlist.nickname || '',
+          description: playlist.intro || '',
+        }))
+      }
+
+      if (source === 'netease') {
+        const meting = new Meting('netease')
+        meting.format(false) // Important: don't format because format expects songs
+        const raw = await withTimeout(meting.search(keyword, { limit, page, type: 1000 } as any))
+        if (!raw) return []
+
+        let data: any
+        try {
+          data = JSON.parse(raw as string)
+        } catch {
+          return []
+        }
+
+        const playlists = data?.result?.playlists
+        if (!Array.isArray(playlists)) return []
+
+        return playlists.map((playlist: any) => ({
+          id: String(playlist.id),
+          name: playlist.name || 'Unknown Playlist',
+          cover: playlist.coverImgUrl || playlist.picUrl || '',
+          trackCount: playlist.trackCount || 0,
+          source: 'netease',
+          creator: playlist.creator?.nickname || '',
+          description: playlist.description || '',
+        }))
+      }
+
+      return []
+    } catch (err) {
+      logger.error(`Search playlist failed for ${source}:`, err)
+      return []
+    }
+  }
+
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
     const cacheKey = `${source}:${keyword}:${limit}:${page}`
 

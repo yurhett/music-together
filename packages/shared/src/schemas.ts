@@ -117,7 +117,7 @@ export const searchQuerySchema = z.object({
   keyword: z.string().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_SIZE_MAX).default(20),
   page: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_MAX).default(1),
-  type: z.enum(['song', 'album']).optional().default('song'),
+  type: z.enum(['song', 'album', 'playlist']).optional().default('song'),
 })
 
 export const urlQuerySchema = z.object({
