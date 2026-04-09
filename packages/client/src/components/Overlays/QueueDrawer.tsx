@@ -53,10 +53,10 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
 
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
     count: queue.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollElement,
     estimateSize: () => 56,
     overscan: 5,
   })
@@ -206,7 +206,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           </div>
         </DrawerHeader>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
+        <div ref={setScrollElement} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
           {queue.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">播放列表为空</div>
           ) : (
@@ -214,6 +214,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index
                 const track = queue[i]
+                if (!track) return null
                 return (
                   <div
                     key={track.id}
