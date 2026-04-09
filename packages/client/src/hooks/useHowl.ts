@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
+import { useRoomStore } from '@/stores/roomStore'
 import { globalAudio, SILENT_WAV_BASE64 } from '@/lib/audioUnlock'
 import { installKeepAliveDebugHelpers, recordKeepAliveDebug } from '@/lib/audioKeepAliveDebug'
 import {
@@ -61,8 +62,12 @@ function isRealStreamUrl(url?: string): boolean {
   return !url.startsWith('data:audio/wav')
 }
 
-function shouldDeferTrackLoadToForeground(track: Track, autoPlay: boolean): boolean {
-  return autoPlay && document.hidden && isStandaloneMode() && isRealStreamUrl(track.streamUrl)
+function shouldDeferTrackLoadToForeground(
+  track: Track,
+  autoPlay: boolean,
+  opts: { highRiskLifecycle: boolean },
+): boolean {
+  return opts.highRiskLifecycle && autoPlay && document.hidden && isStandaloneMode() && isRealStreamUrl(track.streamUrl)
 }
 
 type RecoverPlaybackErrorContext = {
@@ -520,7 +525,10 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         seekTo: seekTo ?? null,
       })
 
-      if (shouldDeferTrackLoadToForeground(track, autoPlay)) {
+      const reconnectMeta = useRoomStore.getState().reconnectMeta
+      const shouldTreatAsHighRiskLifecycle = !navigator.onLine || reconnectMeta.stopped
+
+      if (shouldDeferTrackLoadToForeground(track, autoPlay, { highRiskLifecycle: shouldTreatAsHighRiskLifecycle })) {
         const prev = pendingForegroundLoadRef.current
         if (prev && prev.track.id === track.id) {
           const prevSeek = typeof prev.seekTo === 'number' && Number.isFinite(prev.seekTo) ? Math.max(0, prev.seekTo) : 0
@@ -565,9 +573,21 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         recordKeepAliveDebug('track:hidden-deferred', globalAudio, {
           title: track.title,
           seekTo: seekTo ?? null,
+          reconnecting: reconnectMeta.reconnecting,
+          reconnectStopped: reconnectMeta.stopped,
+          online: navigator.onLine,
         })
         startSilentKeepAlive('hidden-defer-track-load')
         return
+      }
+
+      if (autoPlay && document.hidden && isStandaloneMode() && isRealStreamUrl(track.streamUrl)) {
+        recordKeepAliveDebug('track:hidden-direct-load', globalAudio, {
+          title: track.title,
+          reconnecting: reconnectMeta.reconnecting,
+          reconnectStopped: reconnectMeta.stopped,
+          online: navigator.onLine,
+        })
       }
 
       const now = Date.now()
