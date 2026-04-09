@@ -56,6 +56,9 @@ export function usePlayer() {
   const autoNext = useCallback(() => {
     const { room } = useRoomStore.getState()
     const myId = storage.getUserId()
+    if (!socket.connected) {
+      return
+    }
     if (room?.roomMode === 'radio') {
       return
     }

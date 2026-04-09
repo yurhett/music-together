@@ -312,6 +312,15 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
         const now = performance.now()
         if (now - lastTimeUpdateRef.current >= CURRENT_TIME_THROTTLE_MS) {
           lastTimeUpdateRef.current = now
+
+          const { mediaSessionLoading } = usePlayerStore.getState()
+          const isSilentKeepAlive = globalAudio.src.startsWith('data:audio/wav')
+          const suppressStallCheck = document.hidden || !navigator.onLine || mediaSessionLoading || isSilentKeepAlive
+          if (suppressStallCheck) {
+            stalledRef.current = { lastSeek: -1, since: 0 }
+            return
+          }
+
           const seekVal = globalAudio.currentTime
           usePlayerStore.getState().setCurrentTime(seekVal)
 
