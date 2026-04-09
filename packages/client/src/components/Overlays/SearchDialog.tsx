@@ -103,17 +103,18 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   )
 
   const handleAddBatch = useCallback(
-    (tracks: Track[], _playlistName?: string) => {
+    (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
       const { socket } = useRoomStore.getState() as any
       if (socket) {
-        socket.emit('queue:add-batch', { tracks })
+        socket.emit('queue:add-batch', { tracks, playlistName })
       }
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
         return next
       })
+      toast.success(`已添加 ${tracks.length} 首歌曲`)
     },
     []
   )
