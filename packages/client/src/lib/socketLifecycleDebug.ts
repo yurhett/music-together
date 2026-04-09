@@ -1,4 +1,5 @@
 import type { Socket } from 'socket.io-client'
+import { isPersistentDebugEnabled } from './debugGate'
 
 const SOCKET_DEBUG_KEY = 'mt-socket-lifecycle-debug'
 const SOCKET_DEBUG_MAX = 300
@@ -53,6 +54,8 @@ function getTransportName(socket: Socket): string | null {
 }
 
 export function recordSocketDebug(event: string, socket: Socket, detail?: DebugDetails): void {
+  if (!isPersistentDebugEnabled()) return
+
   const entry: SocketDebugEntry = {
     at: Date.now(),
     event,
@@ -76,6 +79,11 @@ export function recordSocketDebug(event: string, socket: Socket, detail?: DebugD
 
 export function installSocketDebugHelpers(): void {
   if (typeof window === 'undefined') return
+  if (!isPersistentDebugEnabled()) {
+    delete window.__MT_GET_SOCKET_DEBUG__
+    delete window.__MT_CLEAR_SOCKET_DEBUG__
+    return
+  }
   if (window.__MT_GET_SOCKET_DEBUG__) return
 
   window.__MT_GET_SOCKET_DEBUG__ = () => safeRead()

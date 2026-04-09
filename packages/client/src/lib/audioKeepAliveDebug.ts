@@ -1,3 +1,5 @@
+import { isPersistentDebugEnabled } from './debugGate'
+
 const KEEPALIVE_DEBUG_KEY = 'mt-audio-keepalive-debug'
 const KEEPALIVE_DEBUG_MAX = 300
 
@@ -61,6 +63,8 @@ function getSrcKind(audio: HTMLAudioElement): KeepAliveDebugEntry['srcKind'] {
 }
 
 export function recordKeepAliveDebug(event: string, audio: HTMLAudioElement, detail?: DebugDetails): void {
+  if (!isPersistentDebugEnabled()) return
+
   const entry: KeepAliveDebugEntry = {
     at: Date.now(),
     event,
@@ -92,6 +96,11 @@ export function recordKeepAliveDebug(event: string, audio: HTMLAudioElement, det
 
 export function installKeepAliveDebugHelpers(): void {
   if (typeof window === 'undefined') return
+  if (!isPersistentDebugEnabled()) {
+    delete window.__MT_GET_KEEPALIVE_DEBUG__
+    delete window.__MT_CLEAR_KEEPALIVE_DEBUG__
+    return
+  }
   if (window.__MT_GET_KEEPALIVE_DEBUG__) return
 
   window.__MT_GET_KEEPALIVE_DEBUG__ = () => safeRead()
