@@ -12,6 +12,11 @@ import { useLyric } from './useLyric'
 import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
+function isStandaloneMode(): boolean {
+  const nav = navigator as Navigator & { standalone?: boolean }
+  return Boolean(nav.standalone) || Boolean(window.matchMedia?.('(display-mode: standalone)').matches)
+}
+
 /**
  * Composing hook: useHowl + useLyric + usePlayerSync.
  * Provides unified playback controls.
@@ -173,6 +178,15 @@ export function usePlayer() {
       scheduleManualRecoverUnlock()
 
       socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+
+      // In iOS standalone hidden lifecycle, proactive URL refresh often emits a
+      // second PLAYER_PLAY with stale currentTime and overwrites deferred seek.
+      // Keep sync running in background, and refresh URL after foreground resume
+      // (or on actual stream error) instead.
+      if (document.hidden && isStandaloneMode()) {
+        return
+      }
+
       socket.emit(EVENTS.PLAYER_REFRESH_STREAM_URL, {
         currentTime: Math.max(0, currentTime),
         reason: 'manual',

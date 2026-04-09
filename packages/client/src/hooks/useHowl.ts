@@ -22,6 +22,7 @@ const GLOBAL_AUDIO_TEARDOWN_DELAY_MS = 1500
 const HIDDEN_STREAM_LOAD_WATCHDOG_MS = 4000
 const SAME_TRACK_RELOAD_GUARD_MS = 1800
 const SAME_TRACK_SEEK_ALIGN_THRESHOLD_S = 1.2
+const HIDDEN_DEFER_COALESCE_MS = 3000
 
 let activeHowlHookCount = 0
 let globalAudioTeardownTimer: ReturnType<typeof setTimeout> | null = null
@@ -512,6 +513,30 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
 
       if (shouldDeferTrackLoadToForeground(track, autoPlay)) {
         const prev = pendingForegroundLoadRef.current
+        if (prev && prev.track.id === track.id) {
+          const prevSeek = typeof prev.seekTo === 'number' && Number.isFinite(prev.seekTo) ? Math.max(0, prev.seekTo) : 0
+          const nextSeek = typeof seekTo === 'number' && Number.isFinite(seekTo) ? Math.max(0, seekTo) : 0
+          const isCloseSuccession = Date.now() - prev.queuedAt < HIDDEN_DEFER_COALESCE_MS
+          const mergedSeek = isCloseSuccession ? Math.max(prevSeek, nextSeek) : nextSeek
+
+          pendingForegroundLoadRef.current = {
+            track,
+            seekTo: mergedSeek,
+            autoPlay,
+            queuedAt: prev.queuedAt,
+          }
+
+          usePlayerStore.getState().setCurrentTrack(track)
+          recordKeepAliveDebug('track:hidden-deferred-coalesced', globalAudio, {
+            title: track.title,
+            prevSeek,
+            nextSeek,
+            mergedSeek,
+            closeSuccession: isCloseSuccession,
+          })
+          return
+        }
+
         if (prev && prev.track.id !== track.id) {
           recordKeepAliveDebug('track:hidden-deferred-overwrite', globalAudio, {
             previousTitle: prev.track.title,
