@@ -265,7 +265,17 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-border/50">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4">
-          <span className="text-xs text-muted-foreground">Music Together · Made by Yueby</span>
+          <span className="text-xs text-muted-foreground">
+            Music Together · Made by Yueby ·{' '}
+            <a
+              href="https://github.com/Yueby/music-together/blob/main/package.json"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-colors hover:text-foreground"
+            >
+              v{__APP_VERSION__}
+            </a>
+          </span>
           <a
             href="https://github.com/Yueby/music-together"
             target="_blank"
