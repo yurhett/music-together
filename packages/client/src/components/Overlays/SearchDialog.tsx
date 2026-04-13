@@ -9,7 +9,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
-import { PLATFORM_BG } from '@/lib/platform'
+import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
@@ -18,7 +18,8 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
+import { motion } from 'motion/react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { PlaylistDetail } from './Settings/PlaylistDetail'
 
@@ -26,7 +27,7 @@ const EMPTY_QUEUE: Track[] = []
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
-  { id: 'tencent', label: 'QQ音乐' },
+  { id: 'tencent', label: 'QQ' },
   { id: 'kugou', label: '酷狗' },
 ]
 
@@ -43,6 +44,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const listRef = useRef<VirtualTrackListRef>(null)
+  const sourceContainerRef = useRef<HTMLDivElement>(null)
+  const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 })
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
   const { socket } = useSocketContext()
@@ -60,6 +63,39 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   } = usePlaylist()
 
   const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
+
+  // Auto re-search when source or type changes
+  const prevSourceRef = useRef(source)
+  const prevTypeRef = useRef(searchType)
+  useEffect(() => {
+    const sourceChanged = prevSourceRef.current !== source
+    const typeChanged = prevTypeRef.current !== searchType
+    prevSourceRef.current = source
+    prevTypeRef.current = searchType
+    if ((sourceChanged || typeChanged) && keyword.trim()) {
+      setAddedIds(new Set())
+      search(keyword.trim())
+      if (searchType === 'song') listRef.current?.scrollToTop()
+    }
+  }, [source, searchType, keyword, search])
+
+  // Measure active source button position for sliding pill
+  const measurePill = useCallback(() => {
+    const container = sourceContainerRef.current
+    if (!container) return
+    const activeBtn = container.querySelector<HTMLButtonElement>(`[data-source="${source}"]`)
+    if (!activeBtn) return
+    setPillStyle({ left: activeBtn.offsetLeft, width: activeBtn.offsetWidth })
+  }, [source])
+
+  useLayoutEffect(() => {
+    measurePill()
+  }, [measurePill])
+
+  // Re-measure after dialog opens (DOM may not be ready on first render)
+  useEffect(() => {
+    if (open) requestAnimationFrame(measurePill)
+  }, [open, measurePill])
 
   // Reset album detail when dialog closes
   useEffect(() => {
@@ -137,18 +173,25 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="flex h-[70vh] flex-col overflow-hidden sm:h-auto sm:max-h-[80vh] sm:max-w-2xl">
         <ResponsiveDialogHeader>
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <ResponsiveDialogTitle className="shrink-0">
               {selectedAlbum ? selectedAlbum.name : '搜索点歌'}
             </ResponsiveDialogTitle>
             {!selectedAlbum && (
-              <div className="flex items-center gap-1">
+              <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5">
+                <motion.div
+                  className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
+                  animate={{ left: pillStyle.left, width: pillStyle.width }}
+                  transition={{ type: 'spring', bounce: 0.15, duration: 0.3 }}
+                />
                 {SOURCES.map((s) => (
-                  <Button
+                  <button
                     key={s.id}
-                    variant={source === s.id ? 'default' : 'ghost'}
-                    size="sm"
-                    className={cn('h-7 px-2.5 text-xs', source === s.id && PLATFORM_BG[s.id])}
+                    data-source={s.id}
+                    className={cn(
+                      'relative z-10 rounded-md px-2.5 py-0.5 text-xs font-medium transition-colors',
+                      source === s.id ? PLATFORM_TEXT[s.id] : 'text-muted-foreground hover:text-foreground',
+                    )}
                     onClick={() => {
                       setSource(s.id)
                       resetState()
@@ -156,7 +199,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                     }}
                   >
                     {s.label}
-                  </Button>
+                  </button>
                 ))}
               </div>
             )}
