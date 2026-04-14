@@ -298,7 +298,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       // handleLeave only cleans up if the socket was in a room, but
       // NTP_PING can store RTT even for sockets that never joined a room.
       roomRepo.deleteSocketMapping(socket.id)
-      cleanupSocketRateLimit(socket.id)
+      cleanupSocketRateLimit(socket)
     } catch (err) {
       logger.error('disconnect handler error', err, { socketId: socket.id })
     }

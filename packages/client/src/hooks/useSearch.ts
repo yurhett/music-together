@@ -1,28 +1,21 @@
 import { SERVER_URL } from '@/lib/config'
-import type { MusicSource, Track } from '@music-together/shared'
+import type { MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const PAGE_SIZE = 20
 
-interface UseSearchReturn {
-  results: Track[]
-  loading: boolean
-  loadingMore: boolean
-  hasMore: boolean
-  hasSearched: boolean
-  page: number
-  search: (keyword: string) => void
-  loadMore: () => void
-  resetState: () => void
-}
+type SearchResult = Track | Playlist
 
 /**
  * 搜索逻辑 hook — 管理搜索/翻页/abort/竞态保护。
  * 从 SearchDialog 中提取，使 UI 组件只关注渲染。
  */
-export function useSearch(source: MusicSource): UseSearchReturn {
-  const [results, setResults] = useState<Track[]>([])
+export function useSearch(
+  source: MusicSource,
+  type: 'song' | 'album' | 'playlist' = 'song',
+) {
+  const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -47,14 +40,15 @@ export function useSearch(source: MusicSource): UseSearchReturn {
       searchKeyword: string,
       searchPage: number,
       signal: AbortSignal,
-    ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
+      searchType: 'song' | 'album' | 'playlist'
+    ): Promise<{ tracks: SearchResult[]; hasMore: boolean }> => {
       const res = await fetch(
-        `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
+        `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
         { signal, credentials: 'include' },
       )
       if (!res.ok) throw new Error('Search failed')
       const data = await res.json()
-      const tracks: Track[] = data.tracks || []
+      const tracks = data.tracks || []
       return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
     },
     [],
@@ -66,6 +60,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
       if (!trimmed) return
 
       abortRef.current?.abort()
+      loadMoreAbortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
       const currentSearchId = ++searchIdRef.current
@@ -73,7 +68,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
 
       setLoading(true)
       setHasSearched(true)
-      fetchPage(source, trimmed, 1, controller.signal)
+      fetchPage(source, trimmed, 1, controller.signal, type)
         .then((data) => {
           if (searchIdRef.current !== currentSearchId) return
           setResults(data.tracks)
@@ -93,7 +88,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
           }
         })
     },
-    [source, fetchPage],
+    [source, type, fetchPage],
   )
 
   const loadMore = useCallback(() => {
@@ -105,7 +100,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
     const nextPage = page + 1
 
     setLoadingMore(true)
-    fetchPage(source, lastKeywordRef.current, nextPage, controller.signal)
+    fetchPage(source, lastKeywordRef.current, nextPage, controller.signal, type)
       .then((data) => {
         if (searchIdRef.current !== currentSearchId) return
         setResults((prev) => [...prev, ...data.tracks])
@@ -122,7 +117,7 @@ export function useSearch(source: MusicSource): UseSearchReturn {
           setLoadingMore(false)
         }
       })
-  }, [loadingMore, page, source, fetchPage])
+  }, [loadingMore, page, source, type, fetchPage])
 
   const resetState = useCallback(() => {
     abortRef.current?.abort()

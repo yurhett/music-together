@@ -12,6 +12,7 @@ export const EVENTS = {
   ROOM_SET_MODE: 'room:set_mode',
   ROOM_DISSOLVE: 'room:dissolve',
   ROOM_ERROR: 'room:error',
+  ROOM_AUTO_FALLBACK: 'room:auto_fallback',
 
   // Room discovery
   ROOM_LIST: 'room:list',
@@ -73,6 +74,9 @@ export const EVENTS = {
 
   // Queue batch
   QUEUE_ADD_BATCH: 'queue:add_batch',
+
+  // Queue insert
+  QUEUE_INSERT_AFTER_CURRENT: 'queue:insert_after_current',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

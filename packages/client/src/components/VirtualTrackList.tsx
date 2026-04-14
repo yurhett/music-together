@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Loader2, Music2 } from 'lucide-react'
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import React, { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 import { TrackListItem } from './TrackListItem'
 
 /** Start loading more items when the last visible row is within this many rows of the end */
@@ -19,6 +19,7 @@ export interface VirtualTrackListProps {
   isTrackAddDisabled?: (track: Track) => boolean
   getTrackAddDisabledReason?: (track: Track) => string | null | undefined
   onAddTrack: (track: Track) => void
+  onInsertAfterCurrent?: (track: Track) => void
   onArtistClick?: (artist: string) => void
   emptyIcon?: React.ReactNode
   emptyMessage?: string
@@ -56,6 +57,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
     isTrackAddDisabled,
     getTrackAddDisabledReason,
     onAddTrack,
+    onInsertAfterCurrent,
     onArtistClick,
     emptyIcon,
     emptyMessage = '暂无内容',
@@ -65,17 +67,17 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
   },
   ref,
 ) {
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
 
   useImperativeHandle(ref, () => ({
-    scrollToTop: () => scrollRef.current?.scrollTo({ top: 0 }),
+    scrollToTop: () => scrollElement?.scrollTo({ top: 0 }),
   }))
 
   const rowCount = tracks.length + (hasMore ? 1 : 0)
 
   const virtualizer = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollElement,
     estimateSize: () => rowHeight,
     overscan,
   })
@@ -118,7 +120,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
 
   return (
     <div
-      ref={scrollRef}
+      ref={setScrollElement}
       className={cn('min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border', className)}
     >
       <div
@@ -151,6 +153,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
           }
 
           const track = tracks[virtualRow.index]
+          if (!track) return null
           const addDisabled = isTrackAddDisabled?.(track) ?? false
           const addDisabledReason = getTrackAddDisabledReason?.(track)
 
@@ -163,6 +166,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
               isAddDisabled={addDisabled}
               addDisabledReason={addDisabledReason}
               onAdd={onAddTrack}
+              onInsertAfterCurrent={onInsertAfterCurrent}
               onArtistClick={onArtistClick}
               style={{
                 position: 'absolute',

@@ -3,7 +3,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
-import { Check, Lock, Music2, Plus } from 'lucide-react'
+import { ArrowUpToLine, Check, Lock, Music2, Plus } from 'lucide-react'
 import { memo } from 'react'
 
 export interface TrackListItemProps {
@@ -13,6 +13,7 @@ export interface TrackListItemProps {
   isAddDisabled?: boolean
   addDisabledReason?: string | null
   onAdd: (track: Track) => void
+  onInsertAfterCurrent?: (track: Track) => void
   onArtistClick?: (artist: string) => void
   style?: React.CSSProperties
   className?: string
@@ -25,6 +26,7 @@ export const TrackListItem = memo(function TrackListItem({
   isAddDisabled = false,
   addDisabledReason,
   onAdd,
+  onInsertAfterCurrent,
   onArtistClick,
   style,
   className,
@@ -88,32 +90,57 @@ export const TrackListItem = memo(function TrackListItem({
       {/* Duration */}
       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
 
-      {/* Add button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant={isAdded || isAddDisabled ? 'ghost' : 'outline'}
-            size="icon"
-            className={cn(
-              'h-8 w-8 shrink-0',
-              isAdded && 'text-emerald-500 hover:text-emerald-500',
-              isAddDisabled && !isAdded && 'text-amber-500 hover:text-amber-500',
-            )}
-            disabled={disabled}
-            onClick={() => onAdd(track)}
-            aria-label={
-              isAdded
-                ? '已添加'
-                : isAddDisabled
-                  ? `${track.title} 当前不可添加`
-                  : `添加 ${track.title} 到播放列表`
-            }
-          >
-            {isAdded ? <Check className="h-4 w-4" /> : isAddDisabled ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{tooltipText}</TooltipContent>
-      </Tooltip>
+      {/* Add / Top buttons */}
+      <div className="flex shrink-0 items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={isAdded || isAddDisabled ? 'ghost' : 'outline'}
+              size="icon"
+              className={cn(
+                'h-8 w-8 shrink-0',
+                isAdded && 'text-emerald-500 hover:text-emerald-500',
+                isAddDisabled && !isAdded && 'text-amber-500 hover:text-amber-500',
+              )}
+              disabled={disabled}
+              onClick={() => onAdd(track)}
+              aria-label={
+                isAdded
+                  ? '已添加'
+                  : isAddDisabled
+                    ? `${track.title} 当前不可添加`
+                    : `添加 ${track.title} 到播放列表`
+              }
+            >
+              {isAdded ? (
+                <Check className="h-4 w-4" />
+              ) : isAddDisabled ? (
+                <Lock className="h-4 w-4" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{tooltipText}</TooltipContent>
+        </Tooltip>
+
+        {onInsertAfterCurrent && !isAdded && !isAddDisabled && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() => onInsertAfterCurrent(track)}
+                aria-label={`置顶 ${track.title}`}
+              >
+                <ArrowUpToLine className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>置顶到当前播放下方</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
     </div>
   )
 })

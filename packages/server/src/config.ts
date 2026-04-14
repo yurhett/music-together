@@ -1,6 +1,12 @@
 import 'dotenv/config'
 import * as z from 'zod/v4'
 import { TIMING } from '@music-together/shared'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8'))
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -10,6 +16,7 @@ const envSchema = z.object({
   IDENTITY_TTL_DAYS: z.coerce.number().int().positive().default(30),
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
+  AUTO_FALLBACK_ENABLED: z.enum(['true', 'false']).default('true'),
 })
 
 const env = envSchema.parse(process.env)
@@ -19,7 +26,12 @@ const isProd = process.env.NODE_ENV === 'production'
 // 显式设置 CLIENT_URL 时使用严格白名单
 const isDefaultClientUrl = env.CLIENT_URL === 'http://localhost:5173'
 
+// 当 CLIENT_URL 使用 HTTP 时（如局域网 IP 部署），不应设置 Secure cookie
+// 否则浏览器会拒绝接受，导致身份认证失败
+const isHttpClientUrl = env.CLIENT_URL.startsWith('http://')
+
 export const config = {
+  version: rootPkg.version as string,
   port: env.PORT,
   clientUrl: env.CLIENT_URL,
   corsOrigins: isDefaultClientUrl
@@ -34,9 +46,12 @@ export const config = {
   identity: {
     secret: env.IDENTITY_SECRET,
     ttlDays: env.IDENTITY_TTL_DAYS,
-    cookieSecure: env.IDENTITY_COOKIE_SECURE ? env.IDENTITY_COOKIE_SECURE === 'true' : isProd,
+    cookieSecure: env.IDENTITY_COOKIE_SECURE ? env.IDENTITY_COOKIE_SECURE === 'true' : isProd && !isHttpClientUrl,
   },
   rejoin: {
     ttlMs: env.REJOIN_TTL_MS,
+  },
+  autoFallback: {
+    enabled: env.AUTO_FALLBACK_ENABLED === 'true',
   },
 } as const

@@ -27,7 +27,7 @@ app.use(
     credentials: true,
   }),
 )
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
 app.use('/api', identityHttpMiddleware)
 
 // REST API routes
@@ -38,6 +38,11 @@ app.use('/api/rooms', roomRoutes)
 // Health check
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() })
+})
+
+// Version check (client polls on startup to detect updates)
+app.get('/api/version', (_req, res) => {
+  res.json({ version: config.version })
 })
 
 // --- Serve client SPA (条件挂载，仅当构建产物存在时) ---

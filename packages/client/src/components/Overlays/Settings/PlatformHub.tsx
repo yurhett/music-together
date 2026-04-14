@@ -82,6 +82,7 @@ export function PlatformHub() {
             total={playlist.playlistTotal}
             onBack={handleBack}
             onAddTrack={playlist.addTrackToQueue}
+            onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
             onAddAll={playlist.addBatchToQueue}
             onLoadMore={playlist.loadMoreTracks}
           />

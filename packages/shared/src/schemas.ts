@@ -37,6 +37,20 @@ export const setRoleSchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
+// Room — auto fallback notifications
+// ---------------------------------------------------------------------------
+
+export const roomAutoFallbackSchema = z.object({
+  attemptId: z.string().min(1).max(100),
+  status: z.enum(['trying', 'success', 'failed']),
+  fromSource: z.enum(['netease', 'tencent']),
+  toSource: z.enum(['netease', 'tencent']),
+  trackTitle: z.string().min(1).max(500),
+  reasonType: z.enum(['VIP_REQUIRED', 'COPYRIGHT_RESTRICTED', 'NO_RESOURCE', 'TIMEOUT', 'UNKNOWN']).optional(),
+  reasonDetail: z.string().max(200).optional(),
+})
+
+// ---------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------
 
@@ -83,6 +97,8 @@ export const queueAddSchema = z.object({
   track: trackSchema,
 })
 
+export const queueInsertAfterCurrentSchema = queueAddSchema
+
 export const queueAddBatchSchema = z.object({
   tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
   playlistName: z.string().max(200).optional(),
@@ -112,6 +128,7 @@ export const searchQuerySchema = z.object({
   keyword: z.string().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_SIZE_MAX).default(20),
   page: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_MAX).default(1),
+  type: z.enum(['song', 'album', 'playlist']).optional().default('song'),
 })
 
 export const urlQuerySchema = z.object({
@@ -134,10 +151,11 @@ export const coverQuerySchema = z.object({
 export const playlistQuerySchema = z.object({
   source: musicSourceSchema,
   id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
   total: z.coerce.number().int().min(0).optional(),
   roomId: z.string().min(1).max(10).optional(),
+  type: z.enum(['playlist', 'album']).optional().default('playlist'),
 })
 
 // ---------------------------------------------------------------------------

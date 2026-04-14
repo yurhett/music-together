@@ -22,6 +22,7 @@ interface PlaylistDetailProps {
   total: number
   onBack: () => void
   onAddTrack: (track: Track) => void
+  onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
 }
@@ -35,6 +36,7 @@ export function PlaylistDetail({
   total,
   onBack,
   onAddTrack,
+  onInsertAfterCurrent,
   onAddAll,
   onLoadMore,
 }: PlaylistDetailProps) {
@@ -78,9 +80,21 @@ export function PlaylistDetail({
 
       onAddTrack(track)
       setAddedIds((prev) => new Set(prev).add(key))
-      toast.success(`已添加「${track.title}」`)
     },
     [onAddTrack, queueKeys, addedIds, getTrackAddDisabledReason],
+  )
+
+  const handleInsertAfterCurrent = useCallback(
+    (track: Track) => {
+      const key = trackKey(track)
+      if (queueKeys.has(key) || addedIds.has(key)) {
+        toast.info(`「${track.title}」已在队列中`)
+        return
+      }
+      onInsertAfterCurrent?.(track)
+      setAddedIds((prev) => new Set(prev).add(key))
+    },
+    [onInsertAfterCurrent, queueKeys, addedIds],
   )
 
   // Dynamic "add all" logic — filter duplicates
@@ -181,6 +195,7 @@ export function PlaylistDetail({
         isTrackAddDisabled={isTrackAddDisabled}
         getTrackAddDisabledReason={getTrackAddDisabledReason}
         onAddTrack={handleAddTrack}
+        onInsertAfterCurrent={onInsertAfterCurrent ? handleInsertAfterCurrent : undefined}
         emptyIcon={<Music className="h-8 w-8" />}
         emptyMessage="歌单为空"
         className="border-0 rounded-none"

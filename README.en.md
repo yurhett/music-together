@@ -88,6 +88,17 @@ docker run -d --name music-together --restart unless-stopped \
   -p 80:3001 ghcr.io/Yueby/music-together:latest
 ```
 
+**LAN deployment (accessible from other devices):**
+
+```bash
+docker run -d --name music-together --restart unless-stopped \
+  -p 80:3001 \
+  -e CLIENT_URL=http://192.168.1.100:80 \
+  ghcr.io/Yueby/music-together:latest
+```
+
+> Replace `192.168.1.100` with your machine's actual LAN IP. Setting `CLIENT_URL` automatically enables HTTP mode (no Secure cookie), so other devices can access it correctly.
+
 Push to main triggers GitHub Actions to build and push the image. See [Architecture Docs](docs/PROJECT_ARCHITECTURE.md) for details.
 
 ## Project Structure

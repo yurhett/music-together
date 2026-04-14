@@ -88,6 +88,17 @@ docker run -d --name music-together --restart unless-stopped \
   -p 80:3001 ghcr.io/Yueby/music-together:latest
 ```
 
+**局域网部署（其他设备可访问）：**
+
+```bash
+docker run -d --name music-together --restart unless-stopped \
+  -p 80:3001 \
+  -e CLIENT_URL=http://192.168.1.100:80 \
+  ghcr.io/Yueby/music-together:latest
+```
+
+> 将 `192.168.1.100` 替换为你的机器实际局域网 IP。设置 `CLIENT_URL` 后服务会自动以 HTTP 模式运行（不启用 Secure cookie）。
+
 push 到 main 后 GitHub Actions 自动构建镜像。详见 [架构文档](docs/PROJECT_ARCHITECTURE.md)。
 
 ## 项目结构

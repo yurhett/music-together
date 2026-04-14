@@ -3,6 +3,7 @@ import { getIdentityFromRequest, issueIdentityCookie } from '../services/identit
 import { logger } from '../utils/logger.js'
 
 const RENEWAL_LOG_INTERVAL_MS = 5 * 60 * 1000
+const RENEWAL_MAP_MAX_SIZE = 10_000
 const renewalLogAt = new Map<string, number>()
 
 // 定时清理过期条目，防止 Map 无限增长
@@ -18,6 +19,11 @@ function shouldLogRenewal(userId: string): boolean {
   const now = Date.now()
   const last = renewalLogAt.get(userId) ?? 0
   if (now - last < RENEWAL_LOG_INTERVAL_MS) return false
+  // Evict oldest entries if map exceeds size limit
+  if (renewalLogAt.size >= RENEWAL_MAP_MAX_SIZE) {
+    const firstKey = renewalLogAt.keys().next().value
+    if (firstKey) renewalLogAt.delete(firstKey)
+  }
   renewalLogAt.set(userId, now)
   return true
 }

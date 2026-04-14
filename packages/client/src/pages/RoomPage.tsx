@@ -48,7 +48,7 @@ export default function RoomPage() {
   const { socket, isConnected } = useSocketContext()
   const { leaveRoom, updateSettings, setUserRole, setRoomMode, dissolveRoom } = useRoom()
   const { play, pause, seek, next, prev } = usePlayer()
-  const { addTrack, removeTrack, reorderTracks, clearQueue } = useQueue()
+  const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
   const reconnectMeta = useRoomStore((s) => s.reconnectMeta)
@@ -473,7 +473,7 @@ export default function RoomPage() {
             </Drawer>
           )}
 
-          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onAddToQueue={addTrack} />
+          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onAddToQueue={addTrack} onInsertAfterCurrent={insertAfterCurrent} />
           <QueueDrawer
             open={queueOpen}
             onOpenChange={setQueueOpen}

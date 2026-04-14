@@ -18,12 +18,14 @@ const socketEventLimiter = new RateLimiterMemory({
 })
 
 /**
- * Consume a rate limit point for the given socket.
+ * Consume a rate limit point for the given socket's user.
+ * Keyed by userId (not socket.id) to prevent bypass via multiple connections.
  * Returns true if allowed, false if rate-limited (error already emitted).
  */
 export async function checkSocketRateLimit(socket: TypedSocket): Promise<boolean> {
+  const key = socket.data.identityUserId ?? socket.id
   try {
-    await socketEventLimiter.consume(socket.id)
+    await socketEventLimiter.consume(key)
     return true
   } catch {
     socket.emit(EVENTS.ROOM_ERROR, {
@@ -38,8 +40,9 @@ export async function checkSocketRateLimit(socket: TypedSocket): Promise<boolean
  * Clean up rate limiter entries for a disconnected socket.
  * Call this in the disconnect handler to prevent memory growth.
  */
-export function cleanupSocketRateLimit(socketId: string): void {
-  socketEventLimiter.delete(socketId).catch(() => {
+export function cleanupSocketRateLimit(socket: TypedSocket): void {
+  const key = socket.data.identityUserId ?? socket.id
+  socketEventLimiter.delete(key).catch(() => {
     // Ignore — key may not exist if the socket never triggered a rate-limited event
   })
 }

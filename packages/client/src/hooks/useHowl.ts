@@ -708,7 +708,7 @@ export function useHowl(onTrackEnd: () => void, onRecoverPlaybackError?: Recover
             recordKeepAliveDebug('track:play-ok', globalAudio, {
               title: track.title,
             })
-            
+
             const elapsed = (Date.now() - loadStartTime) / 1000
             const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
             if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
