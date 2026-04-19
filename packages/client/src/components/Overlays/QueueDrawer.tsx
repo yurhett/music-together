@@ -52,6 +52,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
   // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
+  const wasOpenRef = useRef(open)
+  const shouldCenterCurrentOnOpenRef = useRef(false)
+  const openScrollRafRef = useRef<number | null>(null)
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
@@ -68,6 +71,49 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     },
     [],
   )
+
+  // Only auto-center once when the drawer transitions from closed to open.
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current
+    wasOpenRef.current = open
+
+    if (open && !wasOpen) {
+      shouldCenterCurrentOnOpenRef.current = true
+    }
+
+    if (!open) {
+      shouldCenterCurrentOnOpenRef.current = false
+      if (openScrollRafRef.current !== null) {
+        cancelAnimationFrame(openScrollRafRef.current)
+        openScrollRafRef.current = null
+      }
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !scrollElement || !shouldCenterCurrentOnOpenRef.current) return
+    if (!currentTrack?.id) return
+
+    const currentIndex = queue.findIndex((track) => track.id === currentTrack.id)
+    if (currentIndex < 0) return
+
+    if (openScrollRafRef.current !== null) {
+      cancelAnimationFrame(openScrollRafRef.current)
+    }
+
+    openScrollRafRef.current = requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(currentIndex, { align: 'center' })
+      shouldCenterCurrentOnOpenRef.current = false
+      openScrollRafRef.current = null
+    })
+
+    return () => {
+      if (openScrollRafRef.current !== null) {
+        cancelAnimationFrame(openScrollRafRef.current)
+        openScrollRafRef.current = null
+      }
+    }
+  }, [open, scrollElement, currentTrack?.id, queue, virtualizer])
 
   const handleClear = useCallback(() => {
     if (!confirmClear) {
